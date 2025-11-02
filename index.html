@@ -1,0 +1,425 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>로또 6/45 스캐너</title>
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useRef, useEffect } = React;
+
+        // 아이콘 컴포넌트들
+        const Camera = () => (
+            <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z" />
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 13a3 3 0 11-6 0 3 3 0 016 0z" />
+            </svg>
+        );
+
+        const CheckCircle = ({ className }) => (
+            <svg className={className} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+        );
+
+        const XCircle = ({ className }) => (
+            <svg className={className} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2m7-2a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+        );
+
+        const Trophy = ({ className }) => (
+            <svg className={className} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4M7.835 4.697a3.42 3.42 0 001.946-.806 3.42 3.42 0 014.438 0 3.42 3.42 0 001.946.806 3.42 3.42 0 013.138 3.138 3.42 3.42 0 00.806 1.946 3.42 3.42 0 010 4.438 3.42 3.42 0 00-.806 1.946 3.42 3.42 0 01-3.138 3.138 3.42 3.42 0 00-1.946.806 3.42 3.42 0 01-4.438 0 3.42 3.42 0 00-1.946-.806 3.42 3.42 0 01-3.138-3.138 3.42 3.42 0 00-.806-1.946 3.42 3.42 0 010-4.438 3.42 3.42 0 00.806-1.946 3.42 3.42 0 013.138-3.138z" />
+            </svg>
+        );
+
+        const Scan = ({ className }) => (
+            <svg className={className} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v1m6 11h2m-6 0h-2v4m0-11v3m0 0h.01M12 12h4.01M16 20h4M4 12h4m12 0h.01M5 8h2a1 1 0 001-1V5a1 1 0 00-1-1H5a1 1 0 00-1 1v2a1 1 0 001 1zm12 0h2a1 1 0 001-1V5a1 1 0 00-1-1h-2a1 1 0 00-1 1v2a1 1 0 001 1zM5 20h2a1 1 0 001-1v-2a1 1 0 00-1-1H5a1 1 0 00-1 1v2a1 1 0 001 1z" />
+            </svg>
+        );
+
+        function LottoScanner() {
+            const [scanMode, setScanMode] = useState(false);
+            const [scannedNumbers, setScannedNumbers] = useState([]);
+            const [latestWinningNumbers, setLatestWinningNumbers] = useState(null);
+            const [checkResult, setCheckResult] = useState(null);
+            const [manualInput, setManualInput] = useState(['', '', '', '', '', '']);
+            const videoRef = useRef(null);
+            const canvasRef = useRef(null);
+            const streamRef = useRef(null);
+            const animationRef = useRef(null);
+
+            // 최신 당첨 번호 (예시: 1196회차)
+            const mockWinningData = {
+                round: 1196,
+                numbers: [8, 12, 15, 29, 40, 45],
+                bonus: 14,
+                date: '2025-11-02'
+            };
+
+            useEffect(() => {
+                setLatestWinningNumbers(mockWinningData);
+                
+                return () => {
+                    if (animationRef.current) {
+                        cancelAnimationFrame(animationRef.current);
+                    }
+                    stopCamera();
+                };
+            }, []);
+
+            // 카메라 시작
+            const startCamera = async () => {
+                try {
+                    const stream = await navigator.mediaDevices.getUserMedia({
+                        video: { facingMode: 'environment' }
+                    });
+                    if (videoRef.current) {
+                        videoRef.current.srcObject = stream;
+                        streamRef.current = stream;
+                        setScanMode(true);
+                        videoRef.current.play();
+                        scanQRCode();
+                    }
+                } catch (err) {
+                    alert('카메라 접근 권한이 필요합니다: ' + err.message);
+                }
+            };
+
+            // 카메라 중지
+            const stopCamera = () => {
+                if (streamRef.current) {
+                    streamRef.current.getTracks().forEach(track => track.stop());
+                    streamRef.current = null;
+                }
+                if (animationRef.current) {
+                    cancelAnimationFrame(animationRef.current);
+                }
+                setScanMode(false);
+            };
+
+            // QR 코드 스캔
+            const scanQRCode = () => {
+                if (!videoRef.current || !canvasRef.current) return;
+
+                const video = videoRef.current;
+                const canvas = canvasRef.current;
+                const context = canvas.getContext('2d');
+
+                if (video.readyState === video.HAVE_ENOUGH_DATA) {
+                    canvas.height = video.videoHeight;
+                    canvas.width = video.videoWidth;
+                    context.drawImage(video, 0, 0, canvas.width, canvas.height);
+                    
+                    const imageData = context.getImageData(0, 0, canvas.width, canvas.height);
+                    const code = jsQR(imageData.data, imageData.width, imageData.height);
+
+                    if (code) {
+                        handleQRCodeDetected(code.data);
+                        stopCamera();
+                        return;
+                    }
+                }
+
+                if (scanMode) {
+                    animationRef.current = requestAnimationFrame(scanQRCode);
+                }
+            };
+
+            // QR 코드 데이터 처리
+            const handleQRCodeDetected = (data) => {
+                try {
+                    // 로또 QR 코드 파싱 시도
+                    // 실제 로또 QR 형식: 예) "v2.0,1196,A,1,8,12,15,29,40,45"
+                    const parts = data.split(',');
+                    
+                    // 번호 추출
+                    const numbers = [];
+                    for (let i = parts.length - 6; i < parts.length; i++) {
+                        const num = parseInt(parts[i]);
+                        if (num >= 1 && num <= 45) {
+                            numbers.push(num);
+                        }
+                    }
+
+                    if (numbers.length === 6) {
+                        const sorted = numbers.sort((a, b) => a - b);
+                        setScannedNumbers(sorted);
+                        checkLottoNumbers(sorted);
+                    } else {
+                        // QR 코드는 인식했지만 로또 번호가 아닐 경우
+                        alert('올바른 로또 QR 코드가 아닙니다.\n\nQR 내용: ' + data.substring(0, 50) + '...\n\n수동으로 입력해주세요.');
+                    }
+                } catch (err) {
+                    alert('QR 코드 읽기 실패: ' + err.message);
+                }
+            };
+
+            // 수동 입력 처리
+            const handleManualInput = (index, value) => {
+                const num = parseInt(value);
+                if (value === '' || (num >= 1 && num <= 45)) {
+                    const newInput = [...manualInput];
+                    newInput[index] = value;
+                    setManualInput(newInput);
+                }
+            };
+
+            // 수동 입력 확인
+            const handleManualCheck = () => {
+                const numbers = manualInput
+                    .filter(n => n !== '')
+                    .map(n => parseInt(n))
+                    .sort((a, b) => a - b);
+
+                if (numbers.length !== 6) {
+                    alert('6개의 번호를 모두 입력해주세요.');
+                    return;
+                }
+
+                if (new Set(numbers).size !== 6) {
+                    alert('중복된 번호가 있습니다.');
+                    return;
+                }
+
+                setScannedNumbers(numbers);
+                checkLottoNumbers(numbers);
+            };
+
+            // 당첨 확인
+            const checkLottoNumbers = (numbers) => {
+                if (!latestWinningNumbers) return;
+
+                const matches = numbers.filter(n => 
+                    latestWinningNumbers.numbers.includes(n)
+                ).length;
+
+                const hasBonus = numbers.includes(latestWinningNumbers.bonus);
+
+                let rank = null;
+                let prize = null;
+
+                if (matches === 6) {
+                    rank = 1;
+                    prize = '약 20억원 (회차별 상이)';
+                } else if (matches === 5 && hasBonus) {
+                    rank = 2;
+                    prize = '약 5천만원 (회차별 상이)';
+                } else if (matches === 5) {
+                    rank = 3;
+                    prize = '약 150만원';
+                } else if (matches === 4) {
+                    rank = 4;
+                    prize = '5만원';
+                } else if (matches === 3) {
+                    rank = 5;
+                    prize = '5천원';
+                }
+
+                setCheckResult({
+                    matches,
+                    hasBonus,
+                    rank,
+                    prize
+                });
+            };
+
+            // 번호 색상 (로또 공식 색상)
+            const getNumberColor = (num) => {
+                if (num <= 10) return 'bg-yellow-400 text-gray-900';
+                if (num <= 20) return 'bg-blue-500 text-white';
+                if (num <= 30) return 'bg-red-500 text-white';
+                if (num <= 40) return 'bg-gray-600 text-white';
+                return 'bg-green-500 text-white';
+            };
+
+            return (
+                <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 p-4">
+                    <div className="max-w-2xl mx-auto">
+                        {/* 헤더 */}
+                        <div className="bg-white rounded-lg shadow-lg p-6 mb-6">
+                            <div className="flex items-center justify-center mb-4">
+                                <Trophy className="w-8 h-8 text-yellow-500 mr-2" />
+                                <h1 className="text-3xl font-bold text-gray-800">로또 6/45 스캐너</h1>
+                            </div>
+                            <p className="text-center text-gray-600">
+                                QR 코드를 스캔하거나 번호를 입력하여 당첨을 확인하세요
+                            </p>
+                        </div>
+
+                        {/* 최신 당첨 번호 */}
+                        {latestWinningNumbers && (
+                            <div className="bg-white rounded-lg shadow-lg p-6 mb-6">
+                                <h2 className="text-xl font-bold text-gray-800 mb-4">
+                                    최신 당첨 번호 (제{latestWinningNumbers.round}회)
+                                </h2>
+                                <div className="flex flex-wrap items-center justify-center gap-3 mb-2">
+                                    {latestWinningNumbers.numbers.map((num, idx) => (
+                                        <div
+                                            key={idx}
+                                            className={`w-12 h-12 rounded-full flex items-center justify-center text-lg font-bold ${getNumberColor(num)}`}
+                                        >
+                                            {num}
+                                        </div>
+                                    ))}
+                                    <span className="text-2xl text-gray-400 mx-2">+</span>
+                                    <div
+                                        className={`w-12 h-12 rounded-full flex items-center justify-center text-lg font-bold border-4 border-gray-300 ${getNumberColor(latestWinningNumbers.bonus)}`}
+                                    >
+                                        {latestWinningNumbers.bonus}
+                                    </div>
+                                </div>
+                                <p className="text-center text-sm text-gray-500">
+                                    추첨일: {latestWinningNumbers.date}
+                                </p>
+                            </div>
+                        )}
+
+                        {/* QR 스캔 섹션 */}
+                        <div className="bg-white rounded-lg shadow-lg p-6 mb-6">
+                            <h2 className="text-xl font-bold text-gray-800 mb-4 flex items-center">
+                                <Scan className="w-6 h-6 mr-2" />
+                                QR 코드 스캔
+                            </h2>
+
+                            {!scanMode ? (
+                                <button
+                                    onClick={startCamera}
+                                    className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-4 px-6 rounded-lg flex items-center justify-center gap-2 transition"
+                                >
+                                    <Camera />
+                                    카메라 시작
+                                </button>
+                            ) : (
+                                <div className="space-y-4">
+                                    <div className="relative bg-black rounded-lg overflow-hidden">
+                                        <video
+                                            ref={videoRef}
+                                            autoPlay
+                                            playsInline
+                                            className="w-full"
+                                        />
+                                        <div className="absolute inset-0 border-4 border-white border-dashed m-8 rounded-lg pointer-events-none"></div>
+                                    </div>
+                                    <button
+                                        onClick={stopCamera}
+                                        className="w-full bg-red-600 hover:bg-red-700 text-white font-bold py-3 px-6 rounded-lg transition"
+                                    >
+                                        스캔 중지
+                                    </button>
+                                </div>
+                            )}
+                            <canvas ref={canvasRef} style={{ display: 'none' }} />
+                        </div>
+
+                        {/* 수동 입력 섹션 */}
+                        <div className="bg-white rounded-lg shadow-lg p-6 mb-6">
+                            <h2 className="text-xl font-bold text-gray-800 mb-4">수동 입력</h2>
+                            <div className="grid grid-cols-6 gap-2 mb-4">
+                                {manualInput.map((value, idx) => (
+                                    <input
+                                        key={idx}
+                                        type="number"
+                                        min="1"
+                                        max="45"
+                                        value={value}
+                                        onChange={(e) => handleManualInput(idx, e.target.value)}
+                                        placeholder={idx + 1}
+                                        className="w-full h-14 text-center text-xl font-bold border-2 border-gray-300 rounded-lg focus:border-indigo-500 focus:outline-none"
+                                    />
+                                ))}
+                            </div>
+                            <button
+                                onClick={handleManualCheck}
+                                className="w-full bg-green-600 hover:bg-green-700 text-white font-bold py-3 px-6 rounded-lg transition"
+                            >
+                                당첨 확인
+                            </button>
+                        </div>
+
+                        {/* 스캔된 번호 표시 */}
+                        {scannedNumbers.length > 0 && (
+                            <div className="bg-white rounded-lg shadow-lg p-6 mb-6">
+                                <h2 className="text-xl font-bold text-gray-800 mb-4">내 번호</h2>
+                                <div className="flex flex-wrap items-center justify-center gap-3">
+                                    {scannedNumbers.map((num, idx) => (
+                                        <div
+                                            key={idx}
+                                            className={`w-12 h-12 rounded-full flex items-center justify-center text-lg font-bold ${getNumberColor(num)}`}
+                                        >
+                                            {num}
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+                        )}
+
+                        {/* 당첨 결과 */}
+                        {checkResult && (
+                            <div className={`rounded-lg shadow-lg p-6 ${
+                                checkResult.rank ? 'bg-gradient-to-br from-yellow-400 to-orange-500' : 'bg-white'
+                            }`}>
+                                <div className="text-center">
+                                    {checkResult.rank ? (
+                                        <>
+                                            <CheckCircle className="w-16 h-16 text-white mx-auto mb-4" />
+                                            <h2 className="text-3xl font-bold text-white mb-2">
+                                                🎉 {checkResult.rank}등 당첨! 🎉
+                                            </h2>
+                                            <p className="text-xl text-white mb-4">
+                                                {checkResult.matches}개 번호 일치
+                                                {checkResult.hasBonus && ' + 보너스'}
+                                            </p>
+                                            <p className="text-2xl font-bold text-white">
+                                                예상 당첨금: {checkResult.prize}
+                                            </p>
+                                        </>
+                                    ) : (
+                                        <>
+                                            <XCircle className="w-16 h-16 text-gray-400 mx-auto mb-4" />
+                                            <h2 className="text-2xl font-bold text-gray-700 mb-2">
+                                                당첨되지 않았습니다
+                                            </h2>
+                                            <p className="text-lg text-gray-600">
+                                                일치하는 번호: {checkResult.matches}개
+                                            </p>
+                                            <p className="text-sm text-gray-500 mt-2">
+                                                (3개 이상 일치해야 당첨됩니다)
+                                            </p>
+                                        </>
+                                    )}
+                                </div>
+                            </div>
+                        )}
+
+                        {/* 안내 사항 */}
+                        <div className="bg-white rounded-lg shadow-lg p-6 mt-6">
+                            <h3 className="text-lg font-bold text-gray-800 mb-3">사용 방법</h3>
+                            <ul className="space-y-2 text-sm text-gray-600">
+                                <li>• 로또 용지 우측 상단의 QR 코드를 스캔하세요</li>
+                                <li>• QR 코드가 인식되지 않으면 수동으로 입력하세요</li>
+                                <li>• 1~45 사이의 숫자 6개를 입력해야 합니다</li>
+                                <li>• 당첨 등수는 일치하는 번호 개수로 결정됩니다</li>
+                                <li className="text-red-500 font-bold">• 테스트용: 8, 12, 15, 29, 40, 45를 입력해보세요!</li>
+                            </ul>
+                        </div>
+                    </div>
+                </div>
+            );
+        }
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<LottoScanner />);
+    </script>
+</body>
+</html>
