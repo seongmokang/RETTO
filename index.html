@@ -56,6 +56,7 @@
             const [manualInput, setManualInput] = useState(['', '', '', '', '', '']);
             const [cameraLoading, setCameraLoading] = useState(false);
             const [debugInfo, setDebugInfo] = useState('');
+            const [shouldStartCamera, setShouldStartCamera] = useState(false);
             const videoRef = useRef(null);
             const canvasRef = useRef(null);
             const streamRef = useRef(null);
@@ -71,7 +72,7 @@
 
             useEffect(() => {
                 setLatestWinningNumbers(mockWinningData);
-                
+
                 return () => {
                     if (animationRef.current) {
                         cancelAnimationFrame(animationRef.current);
@@ -80,21 +81,37 @@
                 };
             }, []);
 
-            // 카메라 시작
-            const startCamera = async () => {
+            // scanMode가 true로 변경되고 shouldStartCamera가 true일 때 카메라 초기화
+            useEffect(() => {
+                if (shouldStartCamera && scanMode && videoRef.current) {
+                    console.log('✅ useEffect: videoRef가 준비됨, 카메라 초기화 시작');
+                    initializeCamera();
+                    setShouldStartCamera(false);
+                }
+            }, [scanMode, shouldStartCamera]);
+
+            // 카메라 시작 버튼 클릭 시
+            const startCamera = () => {
                 console.log('🎥 카메라 시작 요청...');
-                setDebugInfo('카메라 초기화 중...');
-                setCameraLoading(true);
 
                 // 브라우저 호환성 체크
                 if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
                     const errorMsg = '이 브라우저는 카메라를 지원하지 않습니다.';
                     alert(errorMsg);
                     setDebugInfo(errorMsg);
-                    setCameraLoading(false);
                     console.error('❌ MediaDevices API를 지원하지 않습니다');
                     return;
                 }
+
+                setDebugInfo('카메라 초기화 중...');
+                setCameraLoading(true);
+                setScanMode(true);
+                setShouldStartCamera(true);
+            };
+
+            // 실제 카메라 초기화 (useEffect에서 호출)
+            const initializeCamera = async () => {
+                console.log('🎬 카메라 초기화 시작...');
 
                 try {
                     console.log('📱 후면 카메라 요청 중...');
@@ -124,43 +141,51 @@
                         setDebugInfo('전면 카메라 연결됨');
                     }
 
-                    if (videoRef.current && stream) {
-                        console.log('🎬 비디오 엘리먼트에 스트림 연결...');
-                        videoRef.current.srcObject = stream;
-                        streamRef.current = stream;
+                    console.log('🔍 videoRef.current 확인:', videoRef.current);
+                    console.log('🔍 stream 확인:', stream);
+                    console.log('🔍 stream tracks:', stream ? stream.getTracks() : 'no stream');
 
-                        // 비디오 메타데이터 로딩 완료를 기다림
-                        videoRef.current.onloadedmetadata = () => {
-                            console.log('✅ 비디오 메타데이터 로드 완료');
-                            console.log(`📐 비디오 크기: ${videoRef.current.videoWidth}x${videoRef.current.videoHeight}`);
-
-                            videoRef.current.play()
-                                .then(() => {
-                                    console.log('▶️ 비디오 재생 시작');
-                                    setScanMode(true);
-                                    setCameraLoading(false);
-                                    setDebugInfo('스캔 중...');
-                                    scanQRCode();
-                                })
-                                .catch((playErr) => {
-                                    console.error('❌ 비디오 재생 실패:', playErr);
-                                    setDebugInfo(`재생 실패: ${playErr.message}`);
-                                    setCameraLoading(false);
-                                    stopCamera();
-                                });
-                        };
-
-                        videoRef.current.onerror = (err) => {
-                            console.error('❌ 비디오 엘리먼트 에러:', err);
-                            setDebugInfo('비디오 로드 실패');
-                            setCameraLoading(false);
-                            stopCamera();
-                        };
-                    } else {
-                        console.error('❌ videoRef 또는 stream이 없음');
-                        setDebugInfo('비디오 엘리먼트 오류');
+                    if (!videoRef.current) {
+                        console.error('❌ videoRef.current가 여전히 null입니다');
+                        setDebugInfo('비디오 엘리먼트를 찾을 수 없습니다');
                         setCameraLoading(false);
+                        setScanMode(false);
+                        if (stream) {
+                            stream.getTracks().forEach(track => track.stop());
+                        }
+                        return;
                     }
+
+                    console.log('🎬 비디오 엘리먼트에 스트림 연결...');
+                    videoRef.current.srcObject = stream;
+                    streamRef.current = stream;
+
+                    // 비디오 메타데이터 로딩 완료를 기다림
+                    videoRef.current.onloadedmetadata = () => {
+                        console.log('✅ 비디오 메타데이터 로드 완료');
+                        console.log(`📐 비디오 크기: ${videoRef.current.videoWidth}x${videoRef.current.videoHeight}`);
+
+                        videoRef.current.play()
+                            .then(() => {
+                                console.log('▶️ 비디오 재생 시작');
+                                setCameraLoading(false);
+                                setDebugInfo('스캔 중...');
+                                scanQRCode();
+                            })
+                            .catch((playErr) => {
+                                console.error('❌ 비디오 재생 실패:', playErr);
+                                setDebugInfo(`재생 실패: ${playErr.message}`);
+                                setCameraLoading(false);
+                                stopCamera();
+                            });
+                    };
+
+                    videoRef.current.onerror = (err) => {
+                        console.error('❌ 비디오 엘리먼트 에러:', err);
+                        setDebugInfo('비디오 로드 실패');
+                        setCameraLoading(false);
+                        stopCamera();
+                    };
                 } catch (err) {
                     console.error('❌ 카메라 접근 실패:', err);
                     let errorMsg = '카메라 접근 권한이 필요합니다: ' + err.message;
@@ -176,6 +201,7 @@
                     alert(errorMsg);
                     setDebugInfo(errorMsg);
                     setCameraLoading(false);
+                    setScanMode(false);
                 }
             };
 
