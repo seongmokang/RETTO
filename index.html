@@ -53,6 +53,7 @@
             const [scannedNumbers, setScannedNumbers] = useState([]);
             const [latestWinningNumbers, setLatestWinningNumbers] = useState(null);
             const [checkResult, setCheckResult] = useState(null);
+            const [allGamesResults, setAllGamesResults] = useState([]);
             const [manualInput, setManualInput] = useState(['', '', '', '', '', '']);
             const [cameraLoading, setCameraLoading] = useState(false);
             const [debugInfo, setDebugInfo] = useState('');
@@ -81,35 +82,7 @@
                 };
             }, []);
 
-            // scanMode가 true로 변경되고 shouldStartCamera가 true일 때 카메라 초기화
-            useEffect(() => {
-                if (shouldStartCamera && scanMode && videoRef.current) {
-                    console.log('✅ useEffect: videoRef가 준비됨, 카메라 초기화 시작');
-                    initializeCamera();
-                    setShouldStartCamera(false);
-                }
-            }, [scanMode, shouldStartCamera]);
-
-            // 카메라 시작 버튼 클릭 시
-            const startCamera = () => {
-                console.log('🎥 카메라 시작 요청...');
-
-                // 브라우저 호환성 체크
-                if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-                    const errorMsg = '이 브라우저는 카메라를 지원하지 않습니다.';
-                    alert(errorMsg);
-                    setDebugInfo(errorMsg);
-                    console.error('❌ MediaDevices API를 지원하지 않습니다');
-                    return;
-                }
-
-                setDebugInfo('카메라 초기화 중...');
-                setCameraLoading(true);
-                setScanMode(true);
-                setShouldStartCamera(true);
-            };
-
-            // 실제 카메라 초기화 (useEffect에서 호출)
+            // 카메라 초기화 함수를 먼저 정의
             const initializeCamera = async () => {
                 console.log('🎬 카메라 초기화 시작...');
 
@@ -205,6 +178,65 @@
                 }
             };
 
+            // scanMode가 true로 변경되고 shouldStartCamera가 true일 때 카메라 초기화
+            useEffect(() => {
+                console.log('🔄 useEffect 실행:', { shouldStartCamera, scanMode, hasVideoRef: !!videoRef.current });
+
+                if (shouldStartCamera && scanMode) {
+                    // videoRef가 준비되지 않았다면 짧은 딜레이 후 재시도
+                    if (!videoRef.current) {
+                        console.warn('⏳ videoRef가 아직 준비되지 않음, 50ms 후 재시도');
+                        const timeout = setTimeout(() => {
+                            if (videoRef.current) {
+                                console.log('✅ useEffect (재시도): videoRef가 준비됨, 카메라 초기화 시작');
+                                initializeCamera();
+                                setShouldStartCamera(false);
+                            } else {
+                                console.error('❌ videoRef가 여전히 null, 다시 재시도');
+                                // 한 번 더 재시도
+                                setTimeout(() => {
+                                    if (videoRef.current) {
+                                        console.log('✅ useEffect (2차 재시도): videoRef가 준비됨, 카메라 초기화 시작');
+                                        initializeCamera();
+                                        setShouldStartCamera(false);
+                                    } else {
+                                        console.error('❌ videoRef 초기화 실패');
+                                        setCameraLoading(false);
+                                        setScanMode(false);
+                                        setShouldStartCamera(false);
+                                        setDebugInfo('비디오 엘리먼트 초기화 실패');
+                                    }
+                                }, 100);
+                            }
+                        }, 50);
+                        return () => clearTimeout(timeout);
+                    } else {
+                        console.log('✅ useEffect: videoRef가 준비됨, 카메라 초기화 시작');
+                        initializeCamera();
+                        setShouldStartCamera(false);
+                    }
+                }
+            }, [scanMode, shouldStartCamera]);
+
+            // 카메라 시작 버튼 클릭 시
+            const startCamera = () => {
+                console.log('🎥 카메라 시작 요청...');
+
+                // 브라우저 호환성 체크
+                if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+                    const errorMsg = '이 브라우저는 카메라를 지원하지 않습니다.';
+                    alert(errorMsg);
+                    setDebugInfo(errorMsg);
+                    console.error('❌ MediaDevices API를 지원하지 않습니다');
+                    return;
+                }
+
+                setDebugInfo('카메라 초기화 중...');
+                setCameraLoading(true);
+                setScanMode(true);
+                setShouldStartCamera(true);
+            };
+
             // 카메라 중지
             const stopCamera = () => {
                 console.log('🛑 카메라 중지');
@@ -261,29 +293,92 @@
             // QR 코드 데이터 처리
             const handleQRCodeDetected = (data) => {
                 try {
-                    // 로또 QR 코드 파싱 시도
-                    // 실제 로또 QR 형식: 예) "v2.0,1196,A,1,8,12,15,29,40,45"
-                    const parts = data.split(',');
-                    
-                    // 번호 추출
-                    const numbers = [];
-                    for (let i = parts.length - 6; i < parts.length; i++) {
-                        const num = parseInt(parts[i]);
-                        if (num >= 1 && num <= 45) {
-                            numbers.push(num);
-                        }
+                    console.log('📄 QR 코드 원본 데이터:', data);
+
+                    // 로또 QR 코드 파싱
+                    // 형식: https://m.dhlottery.co.kr/qr.do?method=winQr&v=1194q011219222440q070927394243q030607303244q141825294041q081112134143
+                    // v= 뒤에 회차, q로 구분된 각 게임의 번호들 (2자리씩)
+
+                    // URL에서 파라미터 추출
+                    const urlParams = new URLSearchParams(data.split('?')[1]);
+                    const qrValue = urlParams.get('v');
+
+                    if (!qrValue) {
+                        alert('올바른 로또 QR 코드가 아닙니다.\n\n수동으로 입력해주세요.');
+                        return;
                     }
 
-                    if (numbers.length === 6) {
-                        const sorted = numbers.sort((a, b) => a - b);
-                        setScannedNumbers(sorted);
-                        checkLottoNumbers(sorted);
-                    } else {
-                        // QR 코드는 인식했지만 로또 번호가 아닐 경우
-                        alert('올바른 로또 QR 코드가 아닙니다.\n\nQR 내용: ' + data.substring(0, 50) + '...\n\n수동으로 입력해주세요.');
+                    console.log('🎯 QR 값:', qrValue);
+
+                    // q로 분리 (첫 번째는 회차, 나머지는 게임별 번호)
+                    const parts = qrValue.split('q');
+                    const round = parts[0]; // 회차
+                    const games = parts.slice(1); // 게임들
+
+                    console.log('🎲 회차:', round);
+                    console.log('🎮 게임 수:', games.length);
+
+                    if (games.length === 0) {
+                        alert('로또 번호를 찾을 수 없습니다.');
+                        return;
                     }
+
+                    // 모든 게임의 번호 추출
+                    const allGames = [];
+                    games.forEach((game, gameIndex) => {
+                        console.log(`🔍 게임 ${gameIndex + 1} 원본:`, game, `(길이: ${game.length})`);
+
+                        const numbers = [];
+                        // 각 게임은 12자리 (6개 번호 x 2자리)
+                        // 단, 마지막 게임은 추가 데이터가 있을 수 있으므로 처음 12자리만 사용
+                        const gameData = game.substring(0, 12);
+
+                        // 2자리씩 분리 (01, 12, 19, 22, 24, 40)
+                        for (let i = 0; i < gameData.length && i < 12; i += 2) {
+                            const numStr = gameData.substring(i, i + 2);
+                            const num = parseInt(numStr, 10);
+                            if (num >= 1 && num <= 45) {
+                                numbers.push(num);
+                            } else {
+                                console.warn(`⚠️ 유효하지 않은 번호: ${numStr} (${num})`);
+                            }
+                        }
+
+                        if (numbers.length === 6) {
+                            const sorted = numbers.sort((a, b) => a - b);
+                            allGames.push(sorted);
+                            console.log(`🎰 게임 ${gameIndex + 1}:`, sorted);
+                        } else {
+                            console.warn(`⚠️ 게임 ${gameIndex + 1}의 번호가 ${numbers.length}개입니다 (6개 필요):`, numbers);
+                        }
+                    });
+
+                    if (allGames.length === 0) {
+                        alert('올바른 로또 번호를 찾을 수 없습니다.\n\n수동으로 입력해주세요.');
+                        return;
+                    }
+
+                    console.log(`✅ 총 ${allGames.length}개 게임 인식 완료`);
+
+                    // 모든 게임의 당첨 결과 확인
+                    const allResults = allGames.map((numbers, index) => {
+                        const result = checkLottoNumbersForGame(numbers);
+                        return {
+                            gameNumber: index + 1,
+                            numbers: numbers,
+                            ...result
+                        };
+                    });
+
+                    setAllGamesResults(allResults);
+
+                    // 첫 번째 게임을 기본으로 표시
+                    setScannedNumbers(allGames[0]);
+                    setCheckResult(allResults[0]);
+
                 } catch (err) {
-                    alert('QR 코드 읽기 실패: ' + err.message);
+                    console.error('❌ QR 코드 파싱 에러:', err);
+                    alert('QR 코드 읽기 실패: ' + err.message + '\n\n수동으로 입력해주세요.');
                 }
             };
 
@@ -318,11 +413,11 @@
                 checkLottoNumbers(numbers);
             };
 
-            // 당첨 확인
-            const checkLottoNumbers = (numbers) => {
-                if (!latestWinningNumbers) return;
+            // 당첨 확인 (결과 반환)
+            const checkLottoNumbersForGame = (numbers) => {
+                if (!latestWinningNumbers) return null;
 
-                const matches = numbers.filter(n => 
+                const matches = numbers.filter(n =>
                     latestWinningNumbers.numbers.includes(n)
                 ).length;
 
@@ -348,12 +443,19 @@
                     prize = '5천원';
                 }
 
-                setCheckResult({
+                return {
                     matches,
                     hasBonus,
                     rank,
                     prize
-                });
+                };
+            };
+
+            // 당첨 확인 (상태 업데이트)
+            const checkLottoNumbers = (numbers) => {
+                const result = checkLottoNumbersForGame(numbers);
+                setCheckResult(result);
+                setAllGamesResults([]); // 수동 입력 시 단일 결과만 표시
             };
 
             // 번호 색상 (로또 공식 색상)
@@ -414,12 +516,7 @@
                                 QR 코드 스캔
                             </h2>
 
-                            {cameraLoading ? (
-                                <div className="text-center py-8">
-                                    <div className="inline-block animate-spin rounded-full h-12 w-12 border-b-2 border-indigo-600 mb-4"></div>
-                                    <p className="text-gray-600 font-medium">{debugInfo}</p>
-                                </div>
-                            ) : !scanMode ? (
+                            {!scanMode ? (
                                 <div>
                                     <button
                                         onClick={startCamera}
@@ -445,8 +542,16 @@
                                             muted
                                             className="w-full"
                                         />
+                                        {cameraLoading && (
+                                            <div className="absolute inset-0 flex items-center justify-center bg-black bg-opacity-50">
+                                                <div className="text-center">
+                                                    <div className="inline-block animate-spin rounded-full h-12 w-12 border-b-2 border-white mb-4"></div>
+                                                    <p className="text-white font-medium">{debugInfo}</p>
+                                                </div>
+                                            </div>
+                                        )}
                                         <div className="absolute inset-0 border-4 border-white border-dashed m-8 rounded-lg pointer-events-none"></div>
-                                        {debugInfo && (
+                                        {debugInfo && !cameraLoading && (
                                             <div className="absolute top-2 left-2 right-2 bg-black bg-opacity-70 text-white text-sm px-3 py-2 rounded">
                                                 {debugInfo}
                                             </div>
@@ -488,8 +593,57 @@
                             </button>
                         </div>
 
-                        {/* 스캔된 번호 표시 */}
-                        {scannedNumbers.length > 0 && (
+                        {/* 모든 게임 결과 표시 (QR 스캔 시) */}
+                        {allGamesResults.length > 0 && (
+                            <div className="bg-white rounded-lg shadow-lg p-6 mb-6">
+                                <h2 className="text-xl font-bold text-gray-800 mb-4">
+                                    전체 게임 당첨 결과 ({allGamesResults.length}게임)
+                                </h2>
+                                <div className="space-y-4">
+                                    {allGamesResults.map((game, index) => (
+                                        <div key={index} className={`border-2 rounded-lg p-4 ${
+                                            game.rank ? 'border-yellow-500 bg-yellow-50' : 'border-gray-200'
+                                        }`}>
+                                            <div className="flex items-center justify-between mb-3">
+                                                <h3 className="text-lg font-bold text-gray-800">
+                                                    게임 {game.gameNumber}
+                                                </h3>
+                                                {game.rank && (
+                                                    <span className="bg-yellow-500 text-white px-3 py-1 rounded-full text-sm font-bold">
+                                                        {game.rank}등 당첨!
+                                                    </span>
+                                                )}
+                                            </div>
+                                            <div className="flex flex-wrap items-center gap-2 mb-3">
+                                                {game.numbers.map((num, idx) => (
+                                                    <div
+                                                        key={idx}
+                                                        className={`w-10 h-10 rounded-full flex items-center justify-center text-sm font-bold ${getNumberColor(num)}`}
+                                                    >
+                                                        {num}
+                                                    </div>
+                                                ))}
+                                            </div>
+                                            <div className="text-sm">
+                                                {game.rank ? (
+                                                    <div className="text-gray-800">
+                                                        <p className="font-bold">✅ {game.matches}개 일치{game.hasBonus && ' + 보너스'}</p>
+                                                        <p className="text-orange-600 font-bold mt-1">예상 당첨금: {game.prize}</p>
+                                                    </div>
+                                                ) : (
+                                                    <p className="text-gray-500">
+                                                        ❌ {game.matches}개 일치 (낙첨)
+                                                    </p>
+                                                )}
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+                        )}
+
+                        {/* 스캔된 번호 표시 (수동 입력 시) */}
+                        {scannedNumbers.length > 0 && allGamesResults.length === 0 && (
                             <div className="bg-white rounded-lg shadow-lg p-6 mb-6">
                                 <h2 className="text-xl font-bold text-gray-800 mb-4">내 번호</h2>
                                 <div className="flex flex-wrap items-center justify-center gap-3">
@@ -505,8 +659,8 @@
                             </div>
                         )}
 
-                        {/* 당첨 결과 */}
-                        {checkResult && (
+                        {/* 당첨 결과 (수동 입력 시) */}
+                        {checkResult && allGamesResults.length === 0 && (
                             <div className={`rounded-lg shadow-lg p-6 ${
                                 checkResult.rank ? 'bg-gradient-to-br from-yellow-400 to-orange-500' : 'bg-white'
                             }`}>
