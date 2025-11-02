@@ -54,6 +54,8 @@
             const [latestWinningNumbers, setLatestWinningNumbers] = useState(null);
             const [checkResult, setCheckResult] = useState(null);
             const [manualInput, setManualInput] = useState(['', '', '', '', '', '']);
+            const [cameraLoading, setCameraLoading] = useState(false);
+            const [debugInfo, setDebugInfo] = useState('');
             const videoRef = useRef(null);
             const canvasRef = useRef(null);
             const streamRef = useRef(null);
@@ -80,37 +82,130 @@
 
             // 카메라 시작
             const startCamera = async () => {
+                console.log('🎥 카메라 시작 요청...');
+                setDebugInfo('카메라 초기화 중...');
+                setCameraLoading(true);
+
+                // 브라우저 호환성 체크
+                if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+                    const errorMsg = '이 브라우저는 카메라를 지원하지 않습니다.';
+                    alert(errorMsg);
+                    setDebugInfo(errorMsg);
+                    setCameraLoading(false);
+                    console.error('❌ MediaDevices API를 지원하지 않습니다');
+                    return;
+                }
+
                 try {
-                    const stream = await navigator.mediaDevices.getUserMedia({
-                        video: { facingMode: 'environment' }
-                    });
-                    if (videoRef.current) {
+                    console.log('📱 후면 카메라 요청 중...');
+                    let stream;
+
+                    // 먼저 후면 카메라 시도
+                    try {
+                        stream = await navigator.mediaDevices.getUserMedia({
+                            video: {
+                                facingMode: { ideal: 'environment' },
+                                width: { ideal: 1280 },
+                                height: { ideal: 720 }
+                            }
+                        });
+                        console.log('✅ 후면 카메라 접근 성공');
+                        setDebugInfo('후면 카메라 연결됨');
+                    } catch (err) {
+                        // 후면 카메라 실패 시 일반 카메라로 재시도
+                        console.warn('⚠️ 후면 카메라 실패, 일반 카메라 시도:', err.message);
+                        stream = await navigator.mediaDevices.getUserMedia({
+                            video: {
+                                width: { ideal: 1280 },
+                                height: { ideal: 720 }
+                            }
+                        });
+                        console.log('✅ 일반 카메라 접근 성공');
+                        setDebugInfo('전면 카메라 연결됨');
+                    }
+
+                    if (videoRef.current && stream) {
+                        console.log('🎬 비디오 엘리먼트에 스트림 연결...');
                         videoRef.current.srcObject = stream;
                         streamRef.current = stream;
-                        setScanMode(true);
-                        videoRef.current.play();
-                        scanQRCode();
+
+                        // 비디오 메타데이터 로딩 완료를 기다림
+                        videoRef.current.onloadedmetadata = () => {
+                            console.log('✅ 비디오 메타데이터 로드 완료');
+                            console.log(`📐 비디오 크기: ${videoRef.current.videoWidth}x${videoRef.current.videoHeight}`);
+
+                            videoRef.current.play()
+                                .then(() => {
+                                    console.log('▶️ 비디오 재생 시작');
+                                    setScanMode(true);
+                                    setCameraLoading(false);
+                                    setDebugInfo('스캔 중...');
+                                    scanQRCode();
+                                })
+                                .catch((playErr) => {
+                                    console.error('❌ 비디오 재생 실패:', playErr);
+                                    setDebugInfo(`재생 실패: ${playErr.message}`);
+                                    setCameraLoading(false);
+                                    stopCamera();
+                                });
+                        };
+
+                        videoRef.current.onerror = (err) => {
+                            console.error('❌ 비디오 엘리먼트 에러:', err);
+                            setDebugInfo('비디오 로드 실패');
+                            setCameraLoading(false);
+                            stopCamera();
+                        };
+                    } else {
+                        console.error('❌ videoRef 또는 stream이 없음');
+                        setDebugInfo('비디오 엘리먼트 오류');
+                        setCameraLoading(false);
                     }
                 } catch (err) {
-                    alert('카메라 접근 권한이 필요합니다: ' + err.message);
+                    console.error('❌ 카메라 접근 실패:', err);
+                    let errorMsg = '카메라 접근 권한이 필요합니다: ' + err.message;
+
+                    if (err.name === 'NotAllowedError') {
+                        errorMsg = '카메라 권한이 거부되었습니다. 브라우저 설정에서 카메라 권한을 허용해주세요.';
+                    } else if (err.name === 'NotFoundError') {
+                        errorMsg = '카메라를 찾을 수 없습니다. 기기에 카메라가 연결되어 있는지 확인해주세요.';
+                    } else if (err.name === 'NotReadableError') {
+                        errorMsg = '카메라를 사용할 수 없습니다. 다른 앱에서 사용 중일 수 있습니다.';
+                    }
+
+                    alert(errorMsg);
+                    setDebugInfo(errorMsg);
+                    setCameraLoading(false);
                 }
             };
 
             // 카메라 중지
             const stopCamera = () => {
+                console.log('🛑 카메라 중지');
                 if (streamRef.current) {
-                    streamRef.current.getTracks().forEach(track => track.stop());
+                    streamRef.current.getTracks().forEach(track => {
+                        track.stop();
+                        console.log('🔌 카메라 트랙 중지:', track.kind);
+                    });
                     streamRef.current = null;
                 }
                 if (animationRef.current) {
                     cancelAnimationFrame(animationRef.current);
                 }
+                if (videoRef.current) {
+                    videoRef.current.srcObject = null;
+                }
                 setScanMode(false);
+                setCameraLoading(false);
+                setDebugInfo('');
             };
 
             // QR 코드 스캔
             const scanQRCode = () => {
-                if (!videoRef.current || !canvasRef.current) return;
+                if (!videoRef.current || !canvasRef.current) {
+                    console.warn('⚠️ videoRef 또는 canvasRef가 없음');
+                    return;
+                }
 
                 const video = videoRef.current;
                 const canvas = canvasRef.current;
@@ -120,11 +215,12 @@
                     canvas.height = video.videoHeight;
                     canvas.width = video.videoWidth;
                     context.drawImage(video, 0, 0, canvas.width, canvas.height);
-                    
+
                     const imageData = context.getImageData(0, 0, canvas.width, canvas.height);
                     const code = jsQR(imageData.data, imageData.width, imageData.height);
 
                     if (code) {
+                        console.log('✅ QR 코드 감지:', code.data);
                         handleQRCodeDetected(code.data);
                         stopCamera();
                         return;
@@ -292,14 +388,27 @@
                                 QR 코드 스캔
                             </h2>
 
-                            {!scanMode ? (
-                                <button
-                                    onClick={startCamera}
-                                    className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-4 px-6 rounded-lg flex items-center justify-center gap-2 transition"
-                                >
-                                    <Camera />
-                                    카메라 시작
-                                </button>
+                            {cameraLoading ? (
+                                <div className="text-center py-8">
+                                    <div className="inline-block animate-spin rounded-full h-12 w-12 border-b-2 border-indigo-600 mb-4"></div>
+                                    <p className="text-gray-600 font-medium">{debugInfo}</p>
+                                </div>
+                            ) : !scanMode ? (
+                                <div>
+                                    <button
+                                        onClick={startCamera}
+                                        disabled={cameraLoading}
+                                        className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-4 px-6 rounded-lg flex items-center justify-center gap-2 transition disabled:opacity-50 disabled:cursor-not-allowed"
+                                    >
+                                        <Camera />
+                                        카메라 시작
+                                    </button>
+                                    {debugInfo && (
+                                        <div className="mt-3 p-3 bg-yellow-50 border border-yellow-200 rounded-lg">
+                                            <p className="text-sm text-yellow-800">{debugInfo}</p>
+                                        </div>
+                                    )}
+                                </div>
                             ) : (
                                 <div className="space-y-4">
                                     <div className="relative bg-black rounded-lg overflow-hidden">
@@ -307,9 +416,15 @@
                                             ref={videoRef}
                                             autoPlay
                                             playsInline
+                                            muted
                                             className="w-full"
                                         />
                                         <div className="absolute inset-0 border-4 border-white border-dashed m-8 rounded-lg pointer-events-none"></div>
+                                        {debugInfo && (
+                                            <div className="absolute top-2 left-2 right-2 bg-black bg-opacity-70 text-white text-sm px-3 py-2 rounded">
+                                                {debugInfo}
+                                            </div>
+                                        )}
                                     </div>
                                     <button
                                         onClick={stopCamera}
