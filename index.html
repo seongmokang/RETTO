@@ -58,22 +58,16 @@
             const [cameraLoading, setCameraLoading] = useState(false);
             const [debugInfo, setDebugInfo] = useState('');
             const [shouldStartCamera, setShouldStartCamera] = useState(false);
+            const [isLoadingWinningNumbers, setIsLoadingWinningNumbers] = useState(false);
             const videoRef = useRef(null);
             const canvasRef = useRef(null);
             const streamRef = useRef(null);
             const animationRef = useRef(null);
 
-            // 최신 당첨 번호 (예시: 1196회차)
-            const mockWinningData = {
-                round: 1196,
-                numbers: [8, 12, 15, 29, 40, 45],
-                bonus: 14,
-                date: '2025-11-02'
-            };
+            // API 기본 URL
+            const API_BASE_URL = 'http://localhost:5002';
 
             useEffect(() => {
-                setLatestWinningNumbers(mockWinningData);
-
                 return () => {
                     if (animationRef.current) {
                         cancelAnimationFrame(animationRef.current);
@@ -81,6 +75,38 @@
                     stopCamera();
                 };
             }, []);
+
+            // API에서 당첨 번호 가져오기
+            const fetchWinningNumbers = async (round) => {
+                setIsLoadingWinningNumbers(true);
+                try {
+                    console.log(`🔍 ${round}회차 당첨 번호 조회 중...`);
+                    const response = await fetch(`${API_BASE_URL}/api/lotto/${round}`);
+                    const data = await response.json();
+
+                    if (data.success) {
+                        console.log('✅ 당첨 번호 조회 성공:', data.data);
+                        const winningData = {
+                            round: data.data.round,
+                            numbers: data.data.numbers,
+                            bonus: data.data.bonus,
+                            date: data.data.date || new Date().toLocaleDateString('ko-KR')
+                        };
+                        setLatestWinningNumbers(winningData);
+                        return winningData;
+                    } else {
+                        console.error('❌ API 에러:', data.error);
+                        alert(`당첨 번호 조회 실패: ${data.error}`);
+                        return null;
+                    }
+                } catch (error) {
+                    console.error('❌ 네트워크 에러:', error);
+                    alert(`서버 연결 실패: ${error.message}\n\nAPI 서버가 실행 중인지 확인해주세요.\n(python api_server.py)`);
+                    return null;
+                } finally {
+                    setIsLoadingWinningNumbers(false);
+                }
+            };
 
             // 카메라 초기화 함수를 먼저 정의
             const initializeCamera = async () => {
@@ -291,13 +317,13 @@
             };
 
             // QR 코드 데이터 처리
-            const handleQRCodeDetected = (data) => {
+            const handleQRCodeDetected = async (data) => {
                 try {
                     console.log('📄 QR 코드 원본 데이터:', data);
 
                     // 로또 QR 코드 파싱
                     // 형식: https://m.dhlottery.co.kr/qr.do?method=winQr&v=1194q011219222440q070927394243q030607303244q141825294041q081112134143
-                    // v= 뒤에 회차, q로 구분된 각 게임의 번호들 (2자리씩)
+                    // v= 뒤에 회차, q로 구분된 각 게임의 번호들 (2자리씩), 마지막 10자리는 고유번호
 
                     // URL에서 파라미터 추출
                     const urlParams = new URLSearchParams(data.split('?')[1]);
@@ -310,9 +336,16 @@
 
                     console.log('🎯 QR 값:', qrValue);
 
+                    // 마지막 10자리는 고유 번호로 분리
+                    const uniqueId = qrValue.slice(-10);
+                    const dataWithoutUniqueId = qrValue.slice(0, -10);
+
+                    console.log('🔑 고유 번호:', uniqueId);
+                    console.log('🎲 게임 데이터:', dataWithoutUniqueId);
+
                     // q로 분리 (첫 번째는 회차, 나머지는 게임별 번호)
-                    const parts = qrValue.split('q');
-                    const round = parts[0]; // 회차
+                    const parts = dataWithoutUniqueId.split('q');
+                    const round = parseInt(parts[0]); // 회차
                     const games = parts.slice(1); // 게임들
 
                     console.log('🎲 회차:', round);
@@ -323,6 +356,15 @@
                         return;
                     }
 
+                    // API에서 해당 회차의 당첨 번호 가져오기
+                    setDebugInfo(`${round}회차 당첨 번호 조회 중...`);
+                    const winningData = await fetchWinningNumbers(round);
+
+                    if (!winningData) {
+                        // API 조회 실패
+                        return;
+                    }
+
                     // 모든 게임의 번호 추출
                     const allGames = [];
                     games.forEach((game, gameIndex) => {
@@ -330,7 +372,6 @@
 
                         const numbers = [];
                         // 각 게임은 12자리 (6개 번호 x 2자리)
-                        // 단, 마지막 게임은 추가 데이터가 있을 수 있으므로 처음 12자리만 사용
                         const gameData = game.substring(0, 12);
 
                         // 2자리씩 분리 (01, 12, 19, 22, 24, 40)
@@ -362,7 +403,8 @@
 
                     // 모든 게임의 당첨 결과 확인
                     const allResults = allGames.map((numbers, index) => {
-                        const result = checkLottoNumbersForGame(numbers);
+                        const result = checkLottoNumbersForGame(numbers, winningData);
+                        console.log(`🎲 게임 ${index + 1} 당첨 결과:`, result);
                         return {
                             gameNumber: index + 1,
                             numbers: numbers,
@@ -370,11 +412,13 @@
                         };
                     });
 
+                    console.log('📊 전체 게임 결과:', allResults);
                     setAllGamesResults(allResults);
 
                     // 첫 번째 게임을 기본으로 표시
                     setScannedNumbers(allGames[0]);
                     setCheckResult(allResults[0]);
+                    setDebugInfo('당첨 확인 완료');
 
                 } catch (err) {
                     console.error('❌ QR 코드 파싱 에러:', err);
@@ -382,46 +426,35 @@
                 }
             };
 
-            // 수동 입력 처리
-            const handleManualInput = (index, value) => {
-                const num = parseInt(value);
-                if (value === '' || (num >= 1 && num <= 45)) {
-                    const newInput = [...manualInput];
-                    newInput[index] = value;
-                    setManualInput(newInput);
-                }
-            };
-
-            // 수동 입력 확인
-            const handleManualCheck = () => {
-                const numbers = manualInput
-                    .filter(n => n !== '')
-                    .map(n => parseInt(n))
-                    .sort((a, b) => a - b);
-
-                if (numbers.length !== 6) {
-                    alert('6개의 번호를 모두 입력해주세요.');
-                    return;
-                }
-
-                if (new Set(numbers).size !== 6) {
-                    alert('중복된 번호가 있습니다.');
-                    return;
-                }
-
-                setScannedNumbers(numbers);
-                checkLottoNumbers(numbers);
-            };
-
             // 당첨 확인 (결과 반환)
-            const checkLottoNumbersForGame = (numbers) => {
-                if (!latestWinningNumbers) return null;
+            const checkLottoNumbersForGame = (numbers, winningNumbers = null) => {
+                // winningNumbers가 전달되지 않으면 state에서 가져옴
+                const winning = winningNumbers || latestWinningNumbers;
 
-                const matches = numbers.filter(n =>
-                    latestWinningNumbers.numbers.includes(n)
-                ).length;
+                if (!winning) {
+                    console.warn('⚠️ 당첨 번호가 없습니다');
+                    return {
+                        matches: 0,
+                        hasBonus: false,
+                        rank: null,
+                        prize: null
+                    };
+                }
 
-                const hasBonus = numbers.includes(latestWinningNumbers.bonus);
+                console.log('🔍 당첨 번호:', winning.numbers);
+                console.log('🎯 확인할 번호:', numbers);
+
+                // 일치하는 번호 찾기
+                const matchedNumbers = numbers.filter(n =>
+                    winning.numbers.includes(n)
+                );
+
+                const matches = matchedNumbers.length;
+                const hasBonus = numbers.includes(winning.bonus);
+
+                console.log('✅ 일치한 번호:', matchedNumbers);
+                console.log('📊 일치 개수:', matches);
+                console.log('🎁 보너스 일치:', hasBonus);
 
                 let rank = null;
                 let prize = null;
@@ -447,7 +480,8 @@
                     matches,
                     hasBonus,
                     rank,
-                    prize
+                    prize,
+                    matchedNumbers  // 디버깅용으로 일치한 번호도 반환
                 };
             };
 
@@ -482,10 +516,18 @@
                         </div>
 
                         {/* 최신 당첨 번호 */}
-                        {latestWinningNumbers && (
+                        {isLoadingWinningNumbers && (
+                            <div className="bg-white rounded-lg shadow-lg p-6 mb-6">
+                                <div className="text-center">
+                                    <div className="inline-block animate-spin rounded-full h-12 w-12 border-b-2 border-indigo-600 mb-4"></div>
+                                    <p className="text-gray-600">당첨 번호 조회 중...</p>
+                                </div>
+                            </div>
+                        )}
+                        {!isLoadingWinningNumbers && latestWinningNumbers && (
                             <div className="bg-white rounded-lg shadow-lg p-6 mb-6">
                                 <h2 className="text-xl font-bold text-gray-800 mb-4">
-                                    최신 당첨 번호 (제{latestWinningNumbers.round}회)
+                                    당첨 번호 (제{latestWinningNumbers.round}회)
                                 </h2>
                                 <div className="flex flex-wrap items-center justify-center gap-3 mb-2">
                                     {latestWinningNumbers.numbers.map((num, idx) => (
@@ -568,31 +610,6 @@
                             <canvas ref={canvasRef} style={{ display: 'none' }} />
                         </div>
 
-                        {/* 수동 입력 섹션 */}
-                        <div className="bg-white rounded-lg shadow-lg p-6 mb-6">
-                            <h2 className="text-xl font-bold text-gray-800 mb-4">수동 입력</h2>
-                            <div className="grid grid-cols-6 gap-2 mb-4">
-                                {manualInput.map((value, idx) => (
-                                    <input
-                                        key={idx}
-                                        type="number"
-                                        min="1"
-                                        max="45"
-                                        value={value}
-                                        onChange={(e) => handleManualInput(idx, e.target.value)}
-                                        placeholder={idx + 1}
-                                        className="w-full h-14 text-center text-xl font-bold border-2 border-gray-300 rounded-lg focus:border-indigo-500 focus:outline-none"
-                                    />
-                                ))}
-                            </div>
-                            <button
-                                onClick={handleManualCheck}
-                                className="w-full bg-green-600 hover:bg-green-700 text-white font-bold py-3 px-6 rounded-lg transition"
-                            >
-                                당첨 확인
-                            </button>
-                        </div>
-
                         {/* 모든 게임 결과 표시 (QR 스캔 시) */}
                         {allGamesResults.length > 0 && (
                             <div className="bg-white rounded-lg shadow-lg p-6 mb-6">
@@ -615,25 +632,42 @@
                                                 )}
                                             </div>
                                             <div className="flex flex-wrap items-center gap-2 mb-3">
-                                                {game.numbers.map((num, idx) => (
-                                                    <div
-                                                        key={idx}
-                                                        className={`w-10 h-10 rounded-full flex items-center justify-center text-sm font-bold ${getNumberColor(num)}`}
-                                                    >
-                                                        {num}
-                                                    </div>
-                                                ))}
+                                                {game.numbers.map((num, idx) => {
+                                                    const isMatched = latestWinningNumbers && latestWinningNumbers.numbers.includes(num);
+                                                    const isBonus = latestWinningNumbers && num === latestWinningNumbers.bonus;
+                                                    return (
+                                                        <div
+                                                            key={idx}
+                                                            className={`w-10 h-10 rounded-full flex items-center justify-center text-sm font-bold relative ${getNumberColor(num)} ${
+                                                                isMatched ? 'ring-4 ring-green-400' : isBonus ? 'ring-4 ring-orange-400' : ''
+                                                            }`}
+                                                        >
+                                                            {num}
+                                                            {isMatched && (
+                                                                <span className="absolute -top-1 -right-1 text-green-600 text-xs">✓</span>
+                                                            )}
+                                                        </div>
+                                                    );
+                                                })}
                                             </div>
                                             <div className="text-sm">
                                                 {game.rank ? (
                                                     <div className="text-gray-800">
-                                                        <p className="font-bold">✅ {game.matches}개 일치{game.hasBonus && ' + 보너스'}</p>
+                                                        <p className="font-bold">✅ {game.matches ?? 0}개 일치{game.hasBonus && ' + 보너스'}</p>
+                                                        {game.matchedNumbers && game.matchedNumbers.length > 0 && (
+                                                            <p className="text-sm text-gray-600 mt-1">일치: {game.matchedNumbers.join(', ')}</p>
+                                                        )}
                                                         <p className="text-orange-600 font-bold mt-1">예상 당첨금: {game.prize}</p>
                                                     </div>
                                                 ) : (
-                                                    <p className="text-gray-500">
-                                                        ❌ {game.matches}개 일치 (낙첨)
-                                                    </p>
+                                                    <div>
+                                                        <p className="text-gray-500">
+                                                            ❌ {game.matches ?? 0}개 일치 (낙첨)
+                                                        </p>
+                                                        {game.matchedNumbers && game.matchedNumbers.length > 0 && (
+                                                            <p className="text-sm text-gray-600 mt-1">일치: {game.matchedNumbers.join(', ')}</p>
+                                                        )}
+                                                    </div>
                                                 )}
                                             </div>
                                         </div>
@@ -702,10 +736,7 @@
                             <h3 className="text-lg font-bold text-gray-800 mb-3">사용 방법</h3>
                             <ul className="space-y-2 text-sm text-gray-600">
                                 <li>• 로또 용지 우측 상단의 QR 코드를 스캔하세요</li>
-                                <li>• QR 코드가 인식되지 않으면 수동으로 입력하세요</li>
-                                <li>• 1~45 사이의 숫자 6개를 입력해야 합니다</li>
                                 <li>• 당첨 등수는 일치하는 번호 개수로 결정됩니다</li>
-                                <li className="text-red-500 font-bold">• 테스트용: 8, 12, 15, 29, 40, 45를 입력해보세요!</li>
                             </ul>
                         </div>
                     </div>
