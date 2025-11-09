@@ -424,6 +424,7 @@ def save_scan_history():
     rank = data.get('rank')
     prize_amount = data.get('prize_amount')
     has_bonus = data.get('has_bonus', False)
+    unique_id = data.get('unique_id')
 
     if not round_num or not scanned_numbers:
         return jsonify({
@@ -460,10 +461,10 @@ def save_scan_history():
         # 스캔 이력 저장
         cur.execute('''
             INSERT INTO scan_history
-            (user_id, round, scanned_numbers, matched_count, rank, prize_amount, has_bonus)
-            VALUES (%s, %s, %s, %s, %s, %s, %s)
+            (user_id, round, scanned_numbers, matched_count, rank, prize_amount, has_bonus, unique_id)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
             RETURNING id
-        ''', (user_id, round_num, scanned_numbers, matched_count, rank, prize_amount, has_bonus))
+        ''', (user_id, round_num, scanned_numbers, matched_count, rank, prize_amount, has_bonus, unique_id))
 
         history_id = cur.fetchone()['id']
 

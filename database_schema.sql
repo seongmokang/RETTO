@@ -33,8 +33,20 @@ CREATE TABLE IF NOT EXISTS scan_history (
     rank INTEGER,
     prize_amount VARCHAR(100),
     has_bonus BOOLEAN DEFAULT FALSE,
+    unique_id VARCHAR(10),
     scanned_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
+
+-- 기존 테이블에 unique_id 컬럼 추가 (이미 존재하는 경우 무시)
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_name = 'scan_history' AND column_name = 'unique_id'
+    ) THEN
+        ALTER TABLE scan_history ADD COLUMN unique_id VARCHAR(10);
+    END IF;
+END $$;
 
 -- 당첨 번호 캐시 테이블
 CREATE TABLE IF NOT EXISTS winning_numbers (
