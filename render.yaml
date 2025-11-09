@@ -3,11 +3,12 @@ services:
     name: retto-server
     env: python
     plan: free
+    runtime: python
     buildCommand: pip install -r requirements.txt
     startCommand: gunicorn --config gunicorn_config.py server:app
     envVars:
       - key: PYTHON_VERSION
-        value: 3.11.9
+        value: 3.11
       - key: SECRET_KEY
         generateValue: true
       - key: KAKAO_REST_API_KEY
