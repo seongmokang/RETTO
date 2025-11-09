@@ -59,15 +59,24 @@
             const [debugInfo, setDebugInfo] = useState('');
             const [shouldStartCamera, setShouldStartCamera] = useState(false);
             const [isLoadingWinningNumbers, setIsLoadingWinningNumbers] = useState(false);
+            const [user, setUser] = useState(null);
+            const [sessionToken, setSessionToken] = useState(null);
             const videoRef = useRef(null);
             const canvasRef = useRef(null);
             const streamRef = useRef(null);
             const animationRef = useRef(null);
 
-            // API 기본 URL
+            // API 기본 URL (통합 서버)
             const API_BASE_URL = 'http://localhost:5002';
 
             useEffect(() => {
+                // 세션 토큰 확인
+                const storedToken = localStorage.getItem('sessionToken');
+                if (storedToken) {
+                    setSessionToken(storedToken);
+                    fetchUserInfo(storedToken);
+                }
+
                 return () => {
                     if (animationRef.current) {
                         cancelAnimationFrame(animationRef.current);
@@ -75,6 +84,88 @@
                     stopCamera();
                 };
             }, []);
+
+            // 사용자 정보 가져오기
+            const fetchUserInfo = async (token) => {
+                try {
+                    const response = await fetch(`${API_BASE_URL}/api/auth/me`, {
+                        headers: {
+                            'Authorization': `Bearer ${token}`
+                        }
+                    });
+                    const data = await response.json();
+
+                    if (data.success) {
+                        setUser(data.data);
+                    } else {
+                        // 토큰이 유효하지 않으면 제거
+                        localStorage.removeItem('sessionToken');
+                        setSessionToken(null);
+                    }
+                } catch (error) {
+                    console.error('사용자 정보 조회 실패:', error);
+                }
+            };
+
+            // 카카오 로그인
+            const handleKakaoLogin = async () => {
+                try {
+                    const response = await fetch(`${API_BASE_URL}/api/auth/kakao/login`);
+                    const data = await response.json();
+
+                    if (data.success) {
+                        window.location.href = data.auth_url;
+                    } else {
+                        alert('카카오 로그인에 실패했습니다.');
+                    }
+                } catch (error) {
+                    console.error('카카오 로그인 실패:', error);
+                    alert('카카오 로그인 중 오류가 발생했습니다.');
+                }
+            };
+
+            // 로그아웃
+            const handleLogout = async () => {
+                try {
+                    await fetch(`${API_BASE_URL}/api/auth/logout`, {
+                        method: 'POST',
+                        headers: {
+                            'Authorization': `Bearer ${sessionToken}`
+                        }
+                    });
+
+                    localStorage.removeItem('sessionToken');
+                    setSessionToken(null);
+                    setUser(null);
+                } catch (error) {
+                    console.error('로그아웃 실패:', error);
+                }
+            };
+
+            // 스캔 이력 저장
+            const saveScanHistory = async (round, numbers, result) => {
+                if (!sessionToken) return;
+
+                try {
+                    await fetch(`${API_BASE_URL}/api/scan/history`, {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'Authorization': `Bearer ${sessionToken}`
+                        },
+                        body: JSON.stringify({
+                            round,
+                            numbers,
+                            matched_count: result.matches,
+                            rank: result.rank,
+                            prize_amount: result.prize,
+                            has_bonus: result.hasBonus
+                        })
+                    });
+                } catch (error) {
+                    console.error('스캔 이력 저장 실패:', error);
+                }
+            };
 
             // API에서 당첨 번호 가져오기
             const fetchWinningNumbers = async (round) => {
@@ -405,6 +496,12 @@
                     const allResults = allGames.map((numbers, index) => {
                         const result = checkLottoNumbersForGame(numbers, winningData);
                         console.log(`🎲 게임 ${index + 1} 당첨 결과:`, result);
+
+                        // 스캔 이력 저장 (로그인한 경우만)
+                        if (sessionToken) {
+                            saveScanHistory(round, numbers, result);
+                        }
+
                         return {
                             gameNumber: index + 1,
                             numbers: numbers,
@@ -506,9 +603,32 @@
                     <div className="max-w-2xl mx-auto">
                         {/* 헤더 */}
                         <div className="bg-white rounded-lg shadow-lg p-6 mb-6">
-                            <div className="flex items-center justify-center mb-4">
-                                <Trophy className="w-8 h-8 text-yellow-500 mr-2" />
-                                <h1 className="text-3xl font-bold text-gray-800">로또 6/45 스캐너</h1>
+                            <div className="flex items-center justify-between mb-4">
+                                <div className="flex items-center">
+                                    <Trophy className="w-8 h-8 text-yellow-500 mr-2" />
+                                    <h1 className="text-3xl font-bold text-gray-800">로또 6/45 스캐너</h1>
+                                </div>
+                                {user ? (
+                                    <div className="flex items-center gap-3">
+                                        <img src={user.profile_image_url} alt="프로필" className="w-10 h-10 rounded-full" />
+                                        <div className="text-sm">
+                                            <p className="font-semibold text-gray-800">{user.nickname}</p>
+                                            <button onClick={handleLogout} className="text-red-500 hover:text-red-700 text-xs">
+                                                로그아웃
+                                            </button>
+                                        </div>
+                                    </div>
+                                ) : (
+                                    <button
+                                        onClick={handleKakaoLogin}
+                                        className="bg-yellow-400 hover:bg-yellow-500 text-gray-800 font-bold py-2 px-4 rounded-lg flex items-center gap-2 transition"
+                                    >
+                                        <svg className="w-5 h-5" viewBox="0 0 24 24" fill="currentColor">
+                                            <path d="M12 3C6.48 3 2 6.58 2 11c0 2.84 1.89 5.34 4.68 6.84-.2.73-.76 2.73-.88 3.17-.14.52.19.51.39.37.16-.11 2.54-1.77 3.52-2.45.76.11 1.56.16 2.37.16 5.52 0 10-3.58 10-8S17.52 3 12 3z"/>
+                                        </svg>
+                                        카카오 로그인
+                                    </button>
+                                )}
                             </div>
                             <p className="text-center text-gray-600">
                                 QR 코드를 스캔하거나 번호를 입력하여 당첨을 확인하세요
@@ -622,13 +742,30 @@
                                             game.rank ? 'border-yellow-500 bg-yellow-50' : 'border-gray-200'
                                         }`}>
                                             <div className="flex items-center justify-between mb-3">
-                                                <h3 className="text-lg font-bold text-gray-800">
-                                                    게임 {game.gameNumber}
-                                                </h3>
-                                                {game.rank && (
-                                                    <span className="bg-yellow-500 text-white px-3 py-1 rounded-full text-sm font-bold">
-                                                        {game.rank}등 당첨!
-                                                    </span>
+                                                <div className="flex items-center gap-2">
+                                                    <h3 className="text-lg font-bold text-gray-800">
+                                                        게임 {game.gameNumber}
+                                                    </h3>
+                                                    {game.rank && (
+                                                        <span className="bg-yellow-500 text-white px-3 py-1 rounded-full text-sm font-bold">
+                                                            {game.rank}등 당첨!
+                                                        </span>
+                                                    )}
+                                                </div>
+                                                {user ? (
+                                                    <button
+                                                        onClick={() => window.location.href = 'ad.html'}
+                                                        className="bg-gradient-to-r from-purple-500 to-pink-500 hover:from-purple-600 hover:to-pink-600 text-white font-bold py-2 px-4 rounded-lg text-sm transition-all transform hover:scale-105 shadow-md"
+                                                    >
+                                                        리또받기
+                                                    </button>
+                                                ) : (
+                                                    <button
+                                                        onClick={handleKakaoLogin}
+                                                        className="bg-gradient-to-r from-purple-500 to-pink-500 hover:from-purple-600 hover:to-pink-600 text-white font-bold py-2 px-4 rounded-lg text-sm transition-all transform hover:scale-105 shadow-md"
+                                                    >
+                                                        로그인하고 리또받기
+                                                    </button>
                                                 )}
                                             </div>
                                             <div className="flex flex-wrap items-center gap-2 mb-3">

@@ -1,0 +1,153 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>리또받기 - 광고 보기</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Google AdSense -->
+    <script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-pub-5117037864077367"
+     crossorigin="anonymous"></script>
+</head>
+<body class="bg-gradient-to-br from-purple-50 to-pink-100 min-h-screen">
+    <div class="max-w-2xl mx-auto p-4">
+        <!-- 헤더 -->
+        <div class="bg-white rounded-lg shadow-lg p-6 mb-6 mt-6">
+            <div class="text-center">
+                <h1 class="text-3xl font-bold text-transparent bg-clip-text bg-gradient-to-r from-purple-600 to-pink-600 mb-2">
+                    리또받기
+                </h1>
+                <p class="text-gray-600">광고를 시청하고 리또를 받아가세요!</p>
+            </div>
+        </div>
+
+        <!-- 타이머 카운트다운 -->
+        <div class="bg-white rounded-lg shadow-lg p-6 mb-6">
+            <div class="text-center">
+                <div class="inline-block">
+                    <div class="text-6xl font-bold text-purple-600 mb-2" id="countdown">15</div>
+                    <p class="text-gray-600">초 후에 리또를 받을 수 있습니다</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- 광고 영역 -->
+        <div class="bg-white rounded-lg shadow-lg p-6 mb-6">
+            <div class="text-center mb-4">
+                <h2 class="text-xl font-bold text-gray-800">광고</h2>
+                <p class="text-sm text-gray-500">서비스 운영을 위해 광고를 시청해주세요</p>
+            </div>
+
+            <!-- Google AdSense 광고 슬롯 1 (디스플레이 광고) -->
+            <div class="mb-6 min-h-[250px] flex items-center justify-center bg-gray-50 border-2 border-dashed border-gray-300 rounded-lg">
+                <ins class="adsbygoogle"
+                    style="display:block"
+                    data-ad-client="ca-pub-5117037864077367"
+                    data-ad-slot="4881328602"
+                    data-ad-format="auto"
+                    data-full-width-responsive="true"></ins>
+                <script>
+                     (adsbygoogle = window.adsbygoogle || []).push({});
+                </script>
+            </div>
+        </div>
+
+        <!-- 리또 받기 버튼 -->
+        <div class="bg-white rounded-lg shadow-lg p-6 mb-6">
+            <button
+                id="claimButton"
+                disabled
+                class="w-full bg-gradient-to-r from-purple-500 to-pink-500 text-white font-bold py-4 px-6 rounded-lg text-xl transition-all transform hover:scale-105 shadow-lg disabled:opacity-50 disabled:cursor-not-allowed disabled:transform-none"
+            >
+                <span id="buttonText">광고 시청 중...</span>
+            </button>
+        </div>
+
+        <!-- 안내 사항 -->
+        <div class="bg-white rounded-lg shadow-lg p-6">
+            <h3 class="text-lg font-bold text-gray-800 mb-3">안내</h3>
+            <ul class="space-y-2 text-sm text-gray-600">
+                <li>• 광고 시청이 완료되면 리또를 받을 수 있습니다</li>
+                <li>• 받은 리또는 자동으로 적립됩니다</li>
+                <li>• 하루 최대 5회까지 리또를 받을 수 있습니다</li>
+            </ul>
+        </div>
+    </div>
+
+    <script>
+        let countdown = 15;
+        const countdownElement = document.getElementById('countdown');
+        const claimButton = document.getElementById('claimButton');
+        const buttonText = document.getElementById('buttonText');
+
+        // 카운트다운 타이머
+        const timer = setInterval(() => {
+            countdown--;
+            countdownElement.textContent = countdown;
+
+            if (countdown <= 0) {
+                clearInterval(timer);
+                enableClaimButton();
+            }
+        }, 1000);
+
+        // 리또 받기 버튼 활성화
+        function enableClaimButton() {
+            claimButton.disabled = false;
+            buttonText.textContent = '리또 받기 (클릭하세요!)';
+            claimButton.classList.add('animate-pulse');
+
+            // 버튼 클릭 이벤트
+            claimButton.addEventListener('click', claimReward);
+        }
+
+        // 리또 지급 처리
+        function claimReward() {
+            // 로컬 스토리지에 리또 저장
+            let currentLotto = parseInt(localStorage.getItem('lottoPoints') || '0');
+            const dailyCount = parseInt(localStorage.getItem('dailyClaimCount') || '0');
+            const lastClaimDate = localStorage.getItem('lastClaimDate');
+            const today = new Date().toDateString();
+
+            // 날짜가 바뀌면 일일 카운트 초기화
+            if (lastClaimDate !== today) {
+                localStorage.setItem('dailyClaimCount', '0');
+                localStorage.setItem('lastClaimDate', today);
+            }
+
+            // 일일 최대 횟수 체크
+            if (dailyCount >= 5) {
+                alert('오늘은 더 이상 리또를 받을 수 없습니다.\n내일 다시 시도해주세요!');
+                window.location.href = 'index.html';
+                return;
+            }
+
+            // 리또 지급 (1회당 1 리또)
+            currentLotto += 1;
+            localStorage.setItem('lottoPoints', currentLotto.toString());
+            localStorage.setItem('dailyClaimCount', (dailyCount + 1).toString());
+            localStorage.setItem('lastClaimDate', today);
+
+            // 성공 메시지
+            buttonText.textContent = '리또 받기 완료! ✓';
+            claimButton.classList.remove('animate-pulse');
+            claimButton.classList.add('bg-green-500');
+            claimButton.disabled = true;
+
+            // 성공 알림
+            setTimeout(() => {
+                alert(`축하합니다! 리또 1개를 받았습니다!\n\n현재 보유 리또: ${currentLotto}개\n오늘 받은 횟수: ${dailyCount + 1}/5`);
+                window.location.href = 'index.html';
+            }, 500);
+        }
+
+        // 페이지 이탈 방지 (카운트다운 진행 중)
+        window.addEventListener('beforeunload', (e) => {
+            if (countdown > 0) {
+                e.preventDefault();
+                e.returnValue = '광고 시청을 완료하지 않으면 리또를 받을 수 없습니다.';
+            }
+        });
+    </script>
+</body>
+</html>
