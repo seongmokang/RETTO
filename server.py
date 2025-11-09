@@ -52,6 +52,13 @@ def get_db_connection():
             password=os.getenv('DB_PASSWORD', ''),
             cursor_factory=RealDictCursor
         )
+
+        # 한국 시간대 설정
+        cur = conn.cursor()
+        cur.execute("SET TIMEZONE='Asia/Seoul'")
+        conn.commit()
+        cur.close()
+
         return conn
     except Exception as e:
         logger.error(f"DB 연결 실패: {str(e)}")
