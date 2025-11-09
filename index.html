@@ -66,8 +66,10 @@
             const streamRef = useRef(null);
             const animationRef = useRef(null);
 
-            // API 기본 URL (통합 서버)
-            const API_BASE_URL = 'http://localhost:5002';
+            // API 기본 URL (배포 환경에서는 현재 도메인 사용, 로컬에서는 localhost)
+            const API_BASE_URL = window.location.hostname === 'localhost'
+                ? 'http://localhost:5002'
+                : window.location.origin;
 
             useEffect(() => {
                 // 세션 토큰 확인

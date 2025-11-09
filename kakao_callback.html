@@ -14,7 +14,9 @@
     </div>
 
     <script>
-        const API_BASE_URL = 'http://localhost:5002';
+        const API_BASE_URL = window.location.hostname === 'localhost'
+            ? 'http://localhost:5002'
+            : window.location.origin;
         const statusEl = document.getElementById('status');
 
         // URL에서 코드 추출

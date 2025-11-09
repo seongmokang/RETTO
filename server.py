@@ -33,7 +33,7 @@ logger = logging.getLogger(__name__)
 
 # 카카오 API 설정
 KAKAO_REST_API_KEY = os.getenv('KAKAO_REST_API_KEY')
-KAKAO_REDIRECT_URI = os.getenv('KAKAO_REDIRECT_URI', 'http://localhost:5002/kakao_callback.html')
+KAKAO_REDIRECT_URI = os.getenv('KAKAO_REDIRECT_URI')
 KAKAO_AUTH_URL = 'https://kauth.kakao.com/oauth/authorize'
 KAKAO_TOKEN_URL = 'https://kauth.kakao.com/oauth/token'
 KAKAO_USER_INFO_URL = 'https://kapi.kakao.com/v2/user/me'
@@ -599,17 +599,22 @@ def internal_error(error):
 
 
 if __name__ == '__main__':
+    # 환경에 따른 설정
+    port = int(os.getenv('PORT', 5002))
+    debug = os.getenv('FLASK_ENV') != 'production'
+
     print("=" * 60)
     print("🎰 RETTO 로또 스캐너 서버 시작")
     print("=" * 60)
-    print(f"📍 서버 주소: http://localhost:5002")
-    print(f"📍 메인 페이지: http://localhost:5002/")
-    print(f"📍 로또 API: http://localhost:5002/api/lotto/<회차번호>")
-    print(f"📍 카카오 로그인: http://localhost:5002/api/auth/kakao/login")
-    print(f"📍 상태 확인: http://localhost:5002/api/health")
+    print(f"📍 서버 주소: http://localhost:{port}")
+    print(f"📍 메인 페이지: http://localhost:{port}/")
+    print(f"📍 로또 API: http://localhost:{port}/api/lotto/<회차번호>")
+    print(f"📍 카카오 로그인: http://localhost:{port}/api/auth/kakao/login")
+    print(f"📍 상태 확인: http://localhost:{port}/api/health")
+    print(f"📍 디버그 모드: {'ON' if debug else 'OFF'}")
     print("=" * 60)
     print("⚠️  종료하려면 Ctrl+C를 누르세요")
     print("=" * 60 + "\n")
 
-    # 서버 실행 (디버그 모드, 포트 5002)
-    app.run(debug=True, host='0.0.0.0', port=5002)
+    # 서버 실행
+    app.run(debug=debug, host='0.0.0.0', port=port)
