@@ -146,10 +146,10 @@
 
             // 스캔 이력 저장
             const saveScanHistory = async (round, numbers, result, uniqueId = null) => {
-                if (!sessionToken) return;
+                if (!sessionToken) return null;
 
                 try {
-                    await fetch(`${API_BASE_URL}/api/scan/history`, {
+                    const response = await fetch(`${API_BASE_URL}/api/scan/history`, {
                         method: 'POST',
                         headers: {
                             'Content-Type': 'application/json',
@@ -165,8 +165,19 @@
                             unique_id: uniqueId
                         })
                     });
+
+                    const data = await response.json();
+                    if (data.success) {
+                        // history_id와 point_yn을 함께 반환
+                        return {
+                            history_id: data.data.history_id,
+                            point_yn: data.data.point_yn
+                        };
+                    }
+                    return null;
                 } catch (error) {
                     console.error('스캔 이력 저장 실패:', error);
+                    return null;
                 }
             };
 
@@ -424,7 +435,7 @@
                     const qrValue = urlParams.get('v');
 
                     if (!qrValue) {
-                        alert('올바른 로또 QR 코드가 아닙니다.\n\n수동으로 입력해주세요.');
+                        alert('올바른 로또 QR 코드가 아닙니다.');
                         return;
                     }
 
@@ -489,28 +500,36 @@
                     });
 
                     if (allGames.length === 0) {
-                        alert('올바른 로또 번호를 찾을 수 없습니다.\n\n수동으로 입력해주세요.');
+                        alert('올바른 로또 번호를 찾을 수 없습니다.');
                         return;
                     }
 
                     console.log(`✅ 총 ${allGames.length}개 게임 인식 완료`);
 
                     // 모든 게임의 당첨 결과 확인
-                    const allResults = allGames.map((numbers, index) => {
+                    const allResults = await Promise.all(allGames.map(async (numbers, index) => {
                         const result = checkLottoNumbersForGame(numbers, winningData);
                         console.log(`🎲 게임 ${index + 1} 당첨 결과:`, result);
 
                         // 스캔 이력 저장 (로그인한 경우만)
+                        let historyId = null;
+                        let pointYn = false;
                         if (sessionToken) {
-                            saveScanHistory(round, numbers, result, uniqueId);
+                            const scanResult = await saveScanHistory(round, numbers, result, uniqueId);
+                            if (scanResult) {
+                                historyId = scanResult.history_id;
+                                pointYn = scanResult.point_yn;
+                            }
                         }
 
                         return {
                             gameNumber: index + 1,
                             numbers: numbers,
+                            historyId: historyId,
+                            pointYn: pointYn,
                             ...result
                         };
-                    });
+                    }));
 
                     console.log('📊 전체 게임 결과:', allResults);
                     setAllGamesResults(allResults);
@@ -522,7 +541,7 @@
 
                 } catch (err) {
                     console.error('❌ QR 코드 파싱 에러:', err);
-                    alert('QR 코드 읽기 실패: ' + err.message + '\n\n수동으로 입력해주세요.');
+                    alert('QR 코드 읽기 실패: ' + err.message);
                 }
             };
 
@@ -613,12 +632,27 @@
                                 </div>
                                 {user ? (
                                     <div className="flex items-center gap-3">
-                                        <img src={user.profile_image_url} alt="프로필" className="w-10 h-10 rounded-full" />
+                                        <img
+                                            src={user.profile_image_url}
+                                            alt="프로필"
+                                            className="w-10 h-10 rounded-full cursor-pointer hover:ring-2 hover:ring-indigo-400 transition"
+                                            onClick={() => window.location.href = 'history.html'}
+                                        />
                                         <div className="text-sm">
                                             <p className="font-semibold text-gray-800">{user.nickname}</p>
-                                            <button onClick={handleLogout} className="text-red-500 hover:text-red-700 text-xs">
-                                                로그아웃
-                                            </button>
+                                            <div className="flex gap-2">
+                                                <button onClick={() => window.location.href = 'retto_points.html'} className="text-yellow-600 hover:text-yellow-800 text-xs font-semibold">
+                                                    리또 포인트
+                                                </button>
+                                                <span className="text-gray-300">|</span>
+                                                <button onClick={() => window.location.href = 'history.html'} className="text-indigo-600 hover:text-indigo-800 text-xs">
+                                                    스캔 이력
+                                                </button>
+                                                <span className="text-gray-300">|</span>
+                                                <button onClick={handleLogout} className="text-red-500 hover:text-red-700 text-xs">
+                                                    로그아웃
+                                                </button>
+                                            </div>
                                         </div>
                                     </div>
                                 ) : (
@@ -755,12 +789,30 @@
                                                     )}
                                                 </div>
                                                 {user ? (
-                                                    <button
-                                                        onClick={() => window.location.href = 'ad.html'}
-                                                        className="bg-gradient-to-r from-purple-500 to-pink-500 hover:from-purple-600 hover:to-pink-600 text-white font-bold py-2 px-4 rounded-lg text-sm transition-all transform hover:scale-105 shadow-md"
-                                                    >
-                                                        리또받기
-                                                    </button>
+                                                    game.historyId ? (
+                                                        game.pointYn ? (
+                                                            <button
+                                                                disabled
+                                                                className="bg-gray-400 text-white font-bold py-2 px-4 rounded-lg text-sm opacity-50 cursor-not-allowed"
+                                                            >
+                                                                받기완료
+                                                            </button>
+                                                        ) : (
+                                                            <button
+                                                                onClick={() => window.location.href = `ad.html?history_id=${game.historyId}`}
+                                                                className="bg-gradient-to-r from-purple-500 to-pink-500 hover:from-purple-600 hover:to-pink-600 text-white font-bold py-2 px-4 rounded-lg text-sm transition-all transform hover:scale-105 shadow-md"
+                                                            >
+                                                                리또받기
+                                                            </button>
+                                                        )
+                                                    ) : (
+                                                        <button
+                                                            disabled
+                                                            className="bg-gray-400 text-white font-bold py-2 px-4 rounded-lg text-sm opacity-50 cursor-not-allowed"
+                                                        >
+                                                            저장 중...
+                                                        </button>
+                                                    )
                                                 ) : (
                                                     <button
                                                         onClick={handleKakaoLogin}

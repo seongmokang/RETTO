@@ -412,16 +412,11 @@ def get_current_user():
 
 @app.route('/api/scan/history', methods=['POST'])
 def save_scan_history():
-    """스캔 이력 저장"""
+    """스캔 이력 저장 (로그인 선택사항)"""
     session_token = request.headers.get('Authorization')
 
-    if not session_token:
-        return jsonify({
-            'success': False,
-            'error': '인증이 필요합니다.'
-        }), 401
-
-    if session_token.startswith('Bearer '):
+    # Bearer 토큰 형식 처리
+    if session_token and session_token.startswith('Bearer '):
         session_token = session_token[7:]
 
     data = request.json
@@ -448,32 +443,88 @@ def save_scan_history():
 
     try:
         cur = conn.cursor()
+        user_id = None
 
-        # 사용자 확인
-        cur.execute('''
-            SELECT user_id FROM user_sessions
-            WHERE session_token = %s AND expires_at > %s
-        ''', (session_token, datetime.now()))
+        # 세션 토큰이 있으면 사용자 확인 (로그인 상태)
+        if session_token:
+            cur.execute('''
+                SELECT user_id FROM user_sessions
+                WHERE session_token = %s AND expires_at > %s
+            ''', (session_token, datetime.now()))
 
-        session_data = cur.fetchone()
+            session_data = cur.fetchone()
 
-        if not session_data:
-            return jsonify({
-                'success': False,
-                'error': '유효하지 않은 세션입니다.'
-            }), 401
+            if session_data:
+                user_id = session_data['user_id']
+                logger.info(f"로그인 사용자의 스캔 이력 저장: user_id={user_id}")
+            else:
+                logger.warning("유효하지 않은 세션 토큰, 비로그인 스캔으로 처리")
+        else:
+            logger.info("비로그인 사용자의 스캔 이력 저장")
 
-        user_id = session_data['user_id']
+        # 로그인 사용자인 경우, 동일한 로또 번호로 이미 스캔한 이력이 있는지 확인
+        if user_id:
+            # 번호 배열을 정렬하여 비교 (순서 무관)
+            sorted_numbers = sorted(scanned_numbers)
 
-        # 스캔 이력 저장
+            cur.execute('''
+                SELECT id, scanned_numbers
+                FROM scan_history
+                WHERE user_id = %s AND round = %s
+            ''', (user_id, round_num))
+
+            existing_scans = cur.fetchall()
+
+            # 동일한 번호 조합이 있는지 확인
+            duplicate_id = None
+            for scan in existing_scans:
+                if sorted(scan['scanned_numbers']) == sorted_numbers:
+                    duplicate_id = scan['id']
+                    break
+
+            if duplicate_id:
+                # 중복된 스캔이 있으면 scanned_at만 업데이트
+                cur.execute('''
+                    UPDATE scan_history
+                    SET scanned_at = CURRENT_TIMESTAMP,
+                        matched_count = %s,
+                        rank = %s,
+                        prize_amount = %s,
+                        has_bonus = %s
+                    WHERE id = %s
+                    RETURNING id, point_yn
+                ''', (matched_count, rank, prize_amount, has_bonus, duplicate_id))
+
+                result = cur.fetchone()
+                history_id = result['id']
+                point_yn = result['point_yn']
+                logger.info(f"중복 스캔 감지, 기존 이력 업데이트: history_id={history_id}, point_yn={point_yn}")
+
+                conn.commit()
+                cur.close()
+                conn.close()
+
+                return jsonify({
+                    'success': True,
+                    'data': {
+                        'history_id': history_id,
+                        'user_id': user_id,
+                        'is_duplicate': True,
+                        'point_yn': point_yn
+                    }
+                }), 200
+
+        # 스캔 이력 저장 (user_id는 로그인 상태에서만 저장)
         cur.execute('''
             INSERT INTO scan_history
             (user_id, round, scanned_numbers, matched_count, rank, prize_amount, has_bonus, unique_id)
             VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
-            RETURNING id
+            RETURNING id, point_yn
         ''', (user_id, round_num, scanned_numbers, matched_count, rank, prize_amount, has_bonus, unique_id))
 
-        history_id = cur.fetchone()['id']
+        result = cur.fetchone()
+        history_id = result['id']
+        point_yn = result['point_yn']
 
         conn.commit()
         cur.close()
@@ -482,7 +533,10 @@ def save_scan_history():
         return jsonify({
             'success': True,
             'data': {
-                'history_id': history_id
+                'history_id': history_id,
+                'user_id': user_id,  # 로그인 상태 확인용
+                'is_duplicate': False,
+                'point_yn': point_yn
             }
         }), 200
 
@@ -539,7 +593,7 @@ def get_scan_history():
 
         # 스캔 이력 조회
         cur.execute('''
-            SELECT id, round, scanned_numbers, matched_count, rank, prize_amount, has_bonus, scanned_at
+            SELECT id, round, scanned_numbers, matched_count, rank, prize_amount, has_bonus, scanned_at, point_yn
             FROM scan_history
             WHERE user_id = %s
             ORDER BY scanned_at DESC
@@ -560,7 +614,8 @@ def get_scan_history():
                 'rank': h['rank'],
                 'prize_amount': h['prize_amount'],
                 'has_bonus': h['has_bonus'],
-                'scanned_at': h['scanned_at'].isoformat() if h['scanned_at'] else None
+                'scanned_at': h['scanned_at'].isoformat() if h['scanned_at'] else None,
+                'point_yn': h['point_yn']
             } for h in history]
         }), 200
 
@@ -569,6 +624,336 @@ def get_scan_history():
         return jsonify({
             'success': False,
             'error': '스캔 이력 조회 중 오류가 발생했습니다.'
+        }), 500
+    finally:
+        if conn:
+            conn.close()
+
+
+# ==================== 리또 포인트 관리 ====================
+
+@app.route('/api/retto/points/claim', methods=['POST'])
+def claim_retto_points():
+    """광고 시청 후 리또 포인트 적립"""
+    session_token = request.headers.get('Authorization')
+
+    if not session_token:
+        return jsonify({
+            'success': False,
+            'error': '인증이 필요합니다.'
+        }), 401
+
+    if session_token.startswith('Bearer '):
+        session_token = session_token[7:]
+
+    data = request.json
+    history_id = data.get('history_id')
+
+    if not history_id:
+        return jsonify({
+            'success': False,
+            'error': 'history_id가 필요합니다.'
+        }), 400
+
+    conn = get_db_connection()
+    if not conn:
+        return jsonify({
+            'success': False,
+            'error': 'DB 연결에 실패했습니다.'
+        }), 500
+
+    try:
+        cur = conn.cursor()
+
+        # 사용자 확인
+        cur.execute('''
+            SELECT user_id FROM user_sessions
+            WHERE session_token = %s AND expires_at > %s
+        ''', (session_token, datetime.now()))
+
+        session_data = cur.fetchone()
+
+        if not session_data:
+            return jsonify({
+                'success': False,
+                'error': '유효하지 않은 세션입니다.'
+            }), 401
+
+        user_id = session_data['user_id']
+
+        # 스캔 이력 조회 및 포인트 수령 여부 확인
+        cur.execute('''
+            SELECT round, scanned_numbers, matched_count, rank, unique_id, point_yn
+            FROM scan_history
+            WHERE id = %s AND user_id = %s
+        ''', (history_id, user_id))
+
+        scan_data = cur.fetchone()
+
+        if not scan_data:
+            return jsonify({
+                'success': False,
+                'error': '스캔 이력을 찾을 수 없습니다.'
+            }), 404
+
+        # 이미 포인트를 받았는지 확인 (point_yn 기준)
+        if scan_data['point_yn']:
+            return jsonify({
+                'success': False,
+                'error': '이미 포인트를 받은 스캔입니다.'
+            }), 400
+
+        # 포인트 계산 (스캔 기본 1점)
+        points_earned = 1
+        point_description = f"{scan_data['round']}회 로또 스캔"
+        transaction_type = 'scan'
+
+        # 포인트 잔액 업데이트 (없으면 생성)
+        cur.execute('''
+            INSERT INTO retto_points (user_id, balance)
+            VALUES (%s, %s)
+            ON CONFLICT (user_id)
+            DO UPDATE SET balance = retto_points.balance + %s
+        ''', (user_id, points_earned, points_earned))
+
+        # 포인트 적립 내역 저장
+        import json
+        metadata = {
+            'round': scan_data['round'],
+            'rank': scan_data['rank'],
+            'matched_count': scan_data['matched_count'],
+            'unique_id': scan_data['unique_id'],
+            'history_id': history_id
+        }
+
+        cur.execute('''
+            INSERT INTO retto_point_history
+            (user_id, amount, transaction_type, description, metadata)
+            VALUES (%s, %s, %s, %s, %s)
+            RETURNING id
+        ''', (user_id, points_earned, transaction_type, point_description, json.dumps(metadata)))
+
+        point_history_id = cur.fetchone()['id']
+
+        # scan_history의 point_yn을 TRUE로 업데이트
+        cur.execute('''
+            UPDATE scan_history
+            SET point_yn = TRUE
+            WHERE id = %s
+        ''', (history_id,))
+
+        conn.commit()
+        cur.close()
+        conn.close()
+
+        return jsonify({
+            'success': True,
+            'data': {
+                'points_earned': points_earned,
+                'point_history_id': point_history_id
+            }
+        }), 200
+
+    except Exception as e:
+        logger.error(f"리또 포인트 적립 중 오류: {str(e)}")
+        return jsonify({
+            'success': False,
+            'error': '리또 포인트 적립 중 오류가 발생했습니다.'
+        }), 500
+    finally:
+        if conn:
+            conn.close()
+
+
+@app.route('/api/retto/points', methods=['GET'])
+def get_retto_points():
+    """사용자의 리또 포인트 잔액 조회"""
+    session_token = request.headers.get('Authorization')
+
+    if not session_token:
+        return jsonify({
+            'success': False,
+            'error': '인증이 필요합니다.'
+        }), 401
+
+    if session_token.startswith('Bearer '):
+        session_token = session_token[7:]
+
+    conn = get_db_connection()
+    if not conn:
+        return jsonify({
+            'success': False,
+            'error': 'DB 연결에 실패했습니다.'
+        }), 500
+
+    try:
+        cur = conn.cursor()
+
+        # 사용자 확인
+        cur.execute('''
+            SELECT user_id FROM user_sessions
+            WHERE session_token = %s AND expires_at > %s
+        ''', (session_token, datetime.now()))
+
+        session_data = cur.fetchone()
+
+        if not session_data:
+            return jsonify({
+                'success': False,
+                'error': '유효하지 않은 세션입니다.'
+            }), 401
+
+        user_id = session_data['user_id']
+
+        # 포인트 잔액 조회
+        cur.execute('''
+            SELECT balance, updated_at
+            FROM retto_points
+            WHERE user_id = %s
+        ''', (user_id,))
+
+        points_data = cur.fetchone()
+
+        if not points_data:
+            # 포인트 레코드가 없으면 생성
+            cur.execute('''
+                INSERT INTO retto_points (user_id, balance)
+                VALUES (%s, 0)
+                RETURNING balance, updated_at
+            ''', (user_id,))
+            points_data = cur.fetchone()
+            conn.commit()
+
+        cur.close()
+        conn.close()
+
+        return jsonify({
+            'success': True,
+            'data': {
+                'balance': points_data['balance'],
+                'updated_at': points_data['updated_at'].isoformat() if points_data['updated_at'] else None
+            }
+        }), 200
+
+    except Exception as e:
+        logger.error(f"리또 포인트 조회 중 오류: {str(e)}")
+        return jsonify({
+            'success': False,
+            'error': '리또 포인트 조회 중 오류가 발생했습니다.'
+        }), 500
+    finally:
+        if conn:
+            conn.close()
+
+
+@app.route('/api/retto/points/history', methods=['GET'])
+def get_retto_point_history():
+    """사용자의 리또 포인트 적립/사용 내역 조회"""
+    session_token = request.headers.get('Authorization')
+
+    if not session_token:
+        return jsonify({
+            'success': False,
+            'error': '인증이 필요합니다.'
+        }), 401
+
+    if session_token.startswith('Bearer '):
+        session_token = session_token[7:]
+
+    # 쿼리 파라미터
+    limit = request.args.get('limit', 50, type=int)
+    offset = request.args.get('offset', 0, type=int)
+    transaction_type = request.args.get('type')  # 'scan', 'win', 'use', 'admin'
+
+    conn = get_db_connection()
+    if not conn:
+        return jsonify({
+            'success': False,
+            'error': 'DB 연결에 실패했습니다.'
+        }), 500
+
+    try:
+        cur = conn.cursor()
+
+        # 사용자 확인
+        cur.execute('''
+            SELECT user_id FROM user_sessions
+            WHERE session_token = %s AND expires_at > %s
+        ''', (session_token, datetime.now()))
+
+        session_data = cur.fetchone()
+
+        if not session_data:
+            return jsonify({
+                'success': False,
+                'error': '유효하지 않은 세션입니다.'
+            }), 401
+
+        user_id = session_data['user_id']
+
+        # 포인트 내역 조회
+        if transaction_type:
+            cur.execute('''
+                SELECT id, amount, transaction_type, description, metadata, created_at
+                FROM retto_point_history
+                WHERE user_id = %s AND transaction_type = %s
+                ORDER BY created_at DESC
+                LIMIT %s OFFSET %s
+            ''', (user_id, transaction_type, limit, offset))
+        else:
+            cur.execute('''
+                SELECT id, amount, transaction_type, description, metadata, created_at
+                FROM retto_point_history
+                WHERE user_id = %s
+                ORDER BY created_at DESC
+                LIMIT %s OFFSET %s
+            ''', (user_id, limit, offset))
+
+        history = cur.fetchall()
+
+        # 전체 개수 조회
+        if transaction_type:
+            cur.execute('''
+                SELECT COUNT(*) as total
+                FROM retto_point_history
+                WHERE user_id = %s AND transaction_type = %s
+            ''', (user_id, transaction_type))
+        else:
+            cur.execute('''
+                SELECT COUNT(*) as total
+                FROM retto_point_history
+                WHERE user_id = %s
+            ''', (user_id,))
+
+        total_count = cur.fetchone()['total']
+
+        cur.close()
+        conn.close()
+
+        return jsonify({
+            'success': True,
+            'data': {
+                'history': [{
+                    'id': h['id'],
+                    'amount': h['amount'],
+                    'transaction_type': h['transaction_type'],
+                    'description': h['description'],
+                    'metadata': h['metadata'],
+                    'created_at': h['created_at'].isoformat() if h['created_at'] else None
+                } for h in history],
+                'pagination': {
+                    'total': total_count,
+                    'limit': limit,
+                    'offset': offset
+                }
+            }
+        }), 200
+
+    except Exception as e:
+        logger.error(f"리또 포인트 내역 조회 중 오류: {str(e)}")
+        return jsonify({
+            'success': False,
+            'error': '리또 포인트 내역 조회 중 오류가 발생했습니다.'
         }), 500
     finally:
         if conn:

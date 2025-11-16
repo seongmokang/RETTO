@@ -1,0 +1,474 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>스캔 이력 - 로또 6/45</title>
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gradient-to-br from-indigo-100 to-purple-100 min-h-screen">
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect } = React;
+
+        // Icon Components (재사용)
+        const Trophy = ({ className }) => (
+            <svg className={className} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4M7.835 4.697a3.42 3.42 0 001.946-.806 3.42 3.42 0 014.438 0 3.42 3.42 0 001.946.806 3.42 3.42 0 013.138 3.138 3.42 3.42 0 00.806 1.946 3.42 3.42 0 010 4.438 3.42 3.42 0 00-.806 1.946 3.42 3.42 0 01-3.138 3.138 3.42 3.42 0 00-1.946.806 3.42 3.42 0 01-4.438 0 3.42 3.42 0 00-1.946-.806 3.42 3.42 0 01-3.138-3.138 3.42 3.42 0 00-.806-1.946 3.42 3.42 0 010-4.438 3.42 3.42 0 00.806-1.946 3.42 3.42 0 013.138-3.138z" />
+            </svg>
+        );
+
+        const CheckCircle = ({ className }) => (
+            <svg className={className} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+        );
+
+        const XCircle = ({ className }) => (
+            <svg className={className} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2m7-2a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+        );
+
+        const ArrowLeft = ({ className }) => (
+            <svg className={className} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 19l-7-7m0 0l7-7m-7 7h18" />
+            </svg>
+        );
+
+        const Calendar = ({ className }) => (
+            <svg className={className} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+            </svg>
+        );
+
+        const Filter = ({ className }) => (
+            <svg className={className} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2.586a1 1 0 01-.293.707l-6.414 6.414a1 1 0 00-.293.707V17l-4 4v-6.586a1 1 0 00-.293-.707L3.293 7.293A1 1 0 013 6.586V4z" />
+            </svg>
+        );
+
+        function HistoryApp() {
+            const [user, setUser] = useState(null);
+            const [loading, setLoading] = useState(true);
+            const [historyData, setHistoryData] = useState([]);
+            const [filteredData, setFilteredData] = useState([]);
+            const [filterWinOnly, setFilterWinOnly] = useState(false);
+            const [selectedRound, setSelectedRound] = useState('all');
+            const [sortOrder, setSortOrder] = useState('date-desc'); // date-desc, date-asc, round-desc, round-asc
+
+            const API_BASE_URL = window.location.hostname === 'localhost'
+                ? 'http://localhost:5002'
+                : window.location.origin;
+
+            // 사용자 정보 조회
+            useEffect(() => {
+                fetchUserInfo();
+            }, []);
+
+            const fetchUserInfo = async () => {
+                const sessionToken = localStorage.getItem('sessionToken');
+                if (!sessionToken) {
+                    window.location.href = 'index.html';
+                    return;
+                }
+
+                try {
+                    const response = await fetch(`${API_BASE_URL}/api/auth/me`, {
+                        headers: {
+                            'Authorization': `Bearer ${sessionToken}`
+                        }
+                    });
+
+                    if (response.ok) {
+                        const data = await response.json();
+                        setUser(data.user);
+                        fetchScanHistory(sessionToken);
+                    } else {
+                        localStorage.removeItem('sessionToken');
+                        window.location.href = 'index.html';
+                    }
+                } catch (error) {
+                    console.error('사용자 정보 조회 실패:', error);
+                    window.location.href = 'index.html';
+                }
+            };
+
+            // 스캔 이력 조회
+            const fetchScanHistory = async (token) => {
+                try {
+                    const response = await fetch(`${API_BASE_URL}/api/scan/history`, {
+                        headers: {
+                            'Authorization': `Bearer ${token}`
+                        }
+                    });
+
+                    if (response.ok) {
+                        const result = await response.json();
+                        const data = result.data || [];
+
+                        // scanned_numbers 기준으로 중복 제거 (최신 데이터만 유지)
+                        const uniqueData = [];
+                        const seenNumbers = new Set();
+
+                        for (const item of data) {
+                            // 번호 배열을 정렬해서 문자열로 변환 (순서 무관하게 동일 번호 조합 확인)
+                            const numbersKey = [...item.numbers].sort((a, b) => a - b).join(',');
+
+                            if (!seenNumbers.has(numbersKey)) {
+                                seenNumbers.add(numbersKey);
+                                uniqueData.push(item);
+                            }
+                        }
+
+                        setHistoryData(uniqueData);
+                        setFilteredData(uniqueData);
+                    }
+                } catch (error) {
+                    console.error('스캔 이력 조회 실패:', error);
+                } finally {
+                    setLoading(false);
+                }
+            };
+
+            // 필터링 및 정렬
+            useEffect(() => {
+                let filtered = [...historyData];
+
+                // 당첨 필터
+                if (filterWinOnly) {
+                    filtered = filtered.filter(item => item.rank && item.rank <= 5);
+                }
+
+                // 회차 필터
+                if (selectedRound !== 'all') {
+                    filtered = filtered.filter(item => item.round === parseInt(selectedRound));
+                }
+
+                // 정렬
+                filtered.sort((a, b) => {
+                    if (sortOrder === 'date-desc') {
+                        return new Date(b.scanned_at) - new Date(a.scanned_at);
+                    } else if (sortOrder === 'date-asc') {
+                        return new Date(a.scanned_at) - new Date(b.scanned_at);
+                    } else if (sortOrder === 'round-desc') {
+                        return b.round - a.round;
+                    } else {
+                        return a.round - b.round;
+                    }
+                });
+
+                setFilteredData(filtered);
+            }, [historyData, filterWinOnly, selectedRound, sortOrder]);
+
+            // 통계 계산
+            const stats = {
+                totalScans: historyData.length,
+                totalWins: historyData.filter(item => item.rank && item.rank <= 5).length,
+                rank1: historyData.filter(item => item.rank === 1).length,
+                rank2: historyData.filter(item => item.rank === 2).length,
+                rank3: historyData.filter(item => item.rank === 3).length,
+                rank4: historyData.filter(item => item.rank === 4).length,
+                rank5: historyData.filter(item => item.rank === 5).length,
+            };
+
+            // 고유 회차 목록
+            const uniqueRounds = [...new Set(historyData.map(item => item.round))].sort((a, b) => b - a);
+
+            // 번호 색상
+            const getNumberColor = (num) => {
+                if (num <= 10) return 'bg-yellow-400 text-white';
+                if (num <= 20) return 'bg-blue-500 text-white';
+                if (num <= 30) return 'bg-red-500 text-white';
+                if (num <= 40) return 'bg-gray-500 text-white';
+                return 'bg-green-500 text-white';
+            };
+
+            // 날짜 포맷팅
+            const formatDate = (dateString) => {
+                const date = new Date(dateString);
+                const year = date.getFullYear();
+                const month = date.getMonth() + 1;
+                const day = date.getDate();
+                const hours = date.getHours();
+                const minutes = date.getMinutes();
+                const ampm = hours >= 12 ? '오후' : '오전';
+                const displayHours = hours % 12 || 12;
+
+                return `${year}년 ${month}월 ${day}일 ${ampm} ${displayHours}:${minutes.toString().padStart(2, '0')}`;
+            };
+
+            // 등수 뱃지
+            const getRankBadge = (rank) => {
+                if (!rank || rank > 5) return null;
+
+                const colors = {
+                    1: 'bg-yellow-500 text-white',
+                    2: 'bg-orange-500 text-white',
+                    3: 'bg-pink-500 text-white',
+                    4: 'bg-purple-500 text-white',
+                    5: 'bg-indigo-500 text-white'
+                };
+
+                return (
+                    <span className={`px-3 py-1 rounded-full text-sm font-bold ${colors[rank]}`}>
+                        {rank}등
+                    </span>
+                );
+            };
+
+            const handleLogout = async () => {
+                const sessionToken = localStorage.getItem('sessionToken');
+                if (sessionToken) {
+                    await fetch(`${API_BASE_URL}/api/auth/logout`, {
+                        method: 'POST',
+                        headers: {
+                            'Authorization': `Bearer ${sessionToken}`
+                        }
+                    });
+                }
+                localStorage.removeItem('sessionToken');
+                window.location.href = 'index.html';
+            };
+
+            if (loading) {
+                return (
+                    <div className="container mx-auto px-4 py-8 max-w-4xl">
+                        <div className="bg-white rounded-lg shadow-lg p-6">
+                            <div className="animate-pulse">
+                                <div className="h-8 bg-gray-200 rounded w-1/4 mb-4"></div>
+                                <div className="h-4 bg-gray-200 rounded w-1/2 mb-2"></div>
+                                <div className="h-4 bg-gray-200 rounded w-1/3"></div>
+                            </div>
+                        </div>
+                    </div>
+                );
+            }
+
+            return (
+                <div className="container mx-auto px-4 py-8 max-w-4xl">
+                    {/* 헤더 */}
+                    <div className="bg-white rounded-lg shadow-lg p-6 mb-6">
+                        <div className="flex items-center justify-between mb-4">
+                            <div className="flex items-center">
+                                <button
+                                    onClick={() => window.location.href = 'index.html'}
+                                    className="mr-4 p-2 hover:bg-gray-100 rounded-full transition-colors"
+                                >
+                                    <ArrowLeft className="w-6 h-6 text-gray-600" />
+                                </button>
+                                <Trophy className="w-8 h-8 text-yellow-500 mr-2" />
+                                <h1 className="text-3xl font-bold text-gray-800">스캔 이력</h1>
+                            </div>
+                            {user && (
+                                <div className="flex items-center gap-3">
+                                    <img src={user.profile_image_url} alt="프로필" className="w-10 h-10 rounded-full" />
+                                    <div className="text-sm">
+                                        <p className="font-semibold text-gray-800">{user.nickname}</p>
+                                        <div className="flex gap-2">
+                                            <button
+                                                onClick={() => window.location.href = 'retto_points.html'}
+                                                className="text-yellow-600 hover:text-yellow-800 text-xs font-semibold"
+                                            >
+                                                리또 포인트
+                                            </button>
+                                            <span className="text-gray-300">|</span>
+                                            <button
+                                                onClick={handleLogout}
+                                                className="text-red-500 hover:text-red-700 text-xs"
+                                            >
+                                                로그아웃
+                                            </button>
+                                        </div>
+                                    </div>
+                                </div>
+                            )}
+                        </div>
+                    </div>
+
+                    {/* 통계 카드 */}
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+                        <div className="bg-white rounded-lg shadow-lg p-6">
+                            <div className="flex items-center justify-between">
+                                <div>
+                                    <p className="text-gray-500 text-sm mb-1">총 스캔 횟수</p>
+                                    <p className="text-3xl font-bold text-indigo-600">{stats.totalScans}</p>
+                                </div>
+                                <Calendar className="w-12 h-12 text-indigo-200" />
+                            </div>
+                        </div>
+
+                        <div className="bg-white rounded-lg shadow-lg p-6">
+                            <div className="flex items-center justify-between">
+                                <div>
+                                    <p className="text-gray-500 text-sm mb-1">당첨 횟수</p>
+                                    <p className="text-3xl font-bold text-green-600">{stats.totalWins}</p>
+                                </div>
+                                <CheckCircle className="w-12 h-12 text-green-200" />
+                            </div>
+                        </div>
+
+                        <div className="bg-white rounded-lg shadow-lg p-6">
+                            <div>
+                                <p className="text-gray-500 text-sm mb-2">등수별 당첨</p>
+                                <div className="space-y-1 text-sm">
+                                    {stats.rank1 > 0 && <p className="text-yellow-600">1등: {stats.rank1}회</p>}
+                                    {stats.rank2 > 0 && <p className="text-orange-600">2등: {stats.rank2}회</p>}
+                                    {stats.rank3 > 0 && <p className="text-pink-600">3등: {stats.rank3}회</p>}
+                                    {stats.rank4 > 0 && <p className="text-purple-600">4등: {stats.rank4}회</p>}
+                                    {stats.rank5 > 0 && <p className="text-indigo-600">5등: {stats.rank5}회</p>}
+                                    {stats.totalWins === 0 && <p className="text-gray-400">당첨 내역 없음</p>}
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    {/* 필터 바 */}
+                    <div className="bg-white rounded-lg shadow-lg p-4 mb-6">
+                        <div className="flex items-center gap-4 flex-wrap">
+                            <Filter className="w-5 h-5 text-gray-600" />
+
+                            <label className="flex items-center gap-2 cursor-pointer">
+                                <input
+                                    type="checkbox"
+                                    checked={filterWinOnly}
+                                    onChange={(e) => setFilterWinOnly(e.target.checked)}
+                                    className="w-4 h-4 text-indigo-600 rounded"
+                                />
+                                <span className="text-sm text-gray-700">당첨만 보기</span>
+                            </label>
+
+                            <select
+                                value={selectedRound}
+                                onChange={(e) => setSelectedRound(e.target.value)}
+                                className="px-3 py-1 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                            >
+                                <option value="all">전체 회차</option>
+                                {uniqueRounds.map(round => (
+                                    <option key={round} value={round}>{round}회</option>
+                                ))}
+                            </select>
+
+                            <select
+                                value={sortOrder}
+                                onChange={(e) => setSortOrder(e.target.value)}
+                                className="px-3 py-1 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                            >
+                                <option value="date-desc">최신순</option>
+                                <option value="date-asc">오래된순</option>
+                                <option value="round-desc">회차 높은순</option>
+                                <option value="round-asc">회차 낮은순</option>
+                            </select>
+
+                            <div className="ml-auto text-sm text-gray-500">
+                                {filteredData.length}개 항목
+                            </div>
+                        </div>
+                    </div>
+
+                    {/* 이력 리스트 */}
+                    <div className="space-y-4">
+                        {filteredData.length === 0 ? (
+                            <div className="bg-white rounded-lg shadow-lg p-12 text-center">
+                                <p className="text-gray-400 text-lg mb-2">스캔 이력이 없습니다</p>
+                                <p className="text-gray-300 text-sm mb-4">로또 용지를 스캔하여 당첨을 확인해보세요!</p>
+                                <button
+                                    onClick={() => window.location.href = 'index.html'}
+                                    className="px-6 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors"
+                                >
+                                    스캔하러 가기
+                                </button>
+                            </div>
+                        ) : (
+                            filteredData.map((item) => {
+                                const isWinner = item.rank && item.rank <= 5;
+                                return (
+                                    <div
+                                        key={item.id}
+                                        className={`bg-white rounded-lg shadow-lg p-6 border-2 transition-all ${
+                                            isWinner ? 'border-yellow-400 bg-yellow-50' : 'border-transparent hover:border-indigo-200'
+                                        }`}
+                                    >
+                                        <div className="flex items-start justify-between mb-4">
+                                            <div>
+                                                <div className="flex items-center gap-2 mb-1">
+                                                    <h3 className="text-xl font-bold text-gray-800">
+                                                        {item.round}회
+                                                    </h3>
+                                                    {getRankBadge(item.rank)}
+                                                    {isWinner && <CheckCircle className="w-5 h-5 text-green-500" />}
+                                                </div>
+                                                <p className="text-sm text-gray-500">
+                                                    {formatDate(item.scanned_at)}
+                                                </p>
+                                            </div>
+                                            {item.prize_amount && (
+                                                <div className="text-right">
+                                                    <p className="text-sm text-gray-500 mb-1">당첨금</p>
+                                                    <p className="text-lg font-bold text-green-600">
+                                                        {item.prize_amount}
+                                                    </p>
+                                                </div>
+                                            )}
+                                        </div>
+
+                                        <div className="mb-3">
+                                            <p className="text-sm text-gray-600 mb-2">스캔한 번호</p>
+                                            <div className="flex gap-2 flex-wrap">
+                                                {item.numbers.map((num, idx) => (
+                                                    <div
+                                                        key={idx}
+                                                        className={`w-10 h-10 rounded-full flex items-center justify-center text-sm font-bold ${getNumberColor(num)}`}
+                                                    >
+                                                        {num}
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        </div>
+
+                                        <div className="flex items-center justify-between gap-4">
+                                            <div className="flex items-center gap-4 text-sm text-gray-600">
+                                                <span>맞춘 개수: <strong className="text-indigo-600">{item.matched_count}개</strong></span>
+                                                {item.has_bonus && (
+                                                    <span className="px-2 py-1 bg-purple-100 text-purple-700 rounded-full text-xs font-semibold">
+                                                        보너스 번호 일치
+                                                    </span>
+                                                )}
+                                            </div>
+                                            {item.point_yn ? (
+                                                <button
+                                                    disabled
+                                                    className="bg-gray-400 text-white font-bold py-2 px-4 rounded-lg text-sm opacity-50 cursor-not-allowed whitespace-nowrap"
+                                                >
+                                                    받기 완료
+                                                </button>
+                                            ) : (
+                                                <button
+                                                    onClick={() => window.location.href = `ad.html?history_id=${item.id}`}
+                                                    className="bg-gradient-to-r from-purple-500 to-pink-500 hover:from-purple-600 hover:to-pink-600 text-white font-bold py-2 px-4 rounded-lg text-sm transition-all transform hover:scale-105 shadow-md whitespace-nowrap"
+                                                >
+                                                    리또받기
+                                                </button>
+                                            )}
+                                        </div>
+                                    </div>
+                                );
+                            })
+                        )}
+                    </div>
+
+                    {/* 하단 여백 */}
+                    <div className="h-8"></div>
+                </div>
+            );
+        }
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<HistoryApp />);
+    </script>
+</body>
+</html>

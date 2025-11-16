@@ -80,6 +80,19 @@
         const claimButton = document.getElementById('claimButton');
         const buttonText = document.getElementById('buttonText');
 
+        const API_BASE_URL = window.location.hostname === 'localhost'
+            ? 'http://localhost:5002'
+            : window.location.origin;
+
+        // URL에서 history_id 가져오기
+        const urlParams = new URLSearchParams(window.location.search);
+        const historyId = urlParams.get('history_id');
+
+        if (!historyId) {
+            alert('잘못된 접근입니다.');
+            window.location.href = 'index.html';
+        }
+
         // 카운트다운 타이머
         const timer = setInterval(() => {
             countdown--;
@@ -102,43 +115,58 @@
         }
 
         // 리또 지급 처리
-        function claimReward() {
-            // 로컬 스토리지에 리또 저장
-            let currentLotto = parseInt(localStorage.getItem('lottoPoints') || '0');
-            const dailyCount = parseInt(localStorage.getItem('dailyClaimCount') || '0');
-            const lastClaimDate = localStorage.getItem('lastClaimDate');
-            const today = new Date().toDateString();
+        async function claimReward() {
+            const sessionToken = localStorage.getItem('sessionToken');
 
-            // 날짜가 바뀌면 일일 카운트 초기화
-            if (lastClaimDate !== today) {
-                localStorage.setItem('dailyClaimCount', '0');
-                localStorage.setItem('lastClaimDate', today);
-            }
-
-            // 일일 최대 횟수 체크
-            if (dailyCount >= 5) {
-                alert('오늘은 더 이상 리또를 받을 수 없습니다.\n내일 다시 시도해주세요!');
+            if (!sessionToken) {
+                alert('로그인이 필요합니다.');
                 window.location.href = 'index.html';
                 return;
             }
 
-            // 리또 지급 (1회당 1 리또)
-            currentLotto += 1;
-            localStorage.setItem('lottoPoints', currentLotto.toString());
-            localStorage.setItem('dailyClaimCount', (dailyCount + 1).toString());
-            localStorage.setItem('lastClaimDate', today);
-
-            // 성공 메시지
-            buttonText.textContent = '리또 받기 완료! ✓';
-            claimButton.classList.remove('animate-pulse');
-            claimButton.classList.add('bg-green-500');
+            // 버튼 비활성화 (중복 클릭 방지)
             claimButton.disabled = true;
+            buttonText.textContent = '리또 적립 중...';
 
-            // 성공 알림
-            setTimeout(() => {
-                alert(`축하합니다! 리또 1개를 받았습니다!\n\n현재 보유 리또: ${currentLotto}개\n오늘 받은 횟수: ${dailyCount + 1}/5`);
+            try {
+                const response = await fetch(`${API_BASE_URL}/api/retto/points/claim`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${sessionToken}`
+                    },
+                    body: JSON.stringify({
+                        history_id: historyId
+                    })
+                });
+
+                const data = await response.json();
+
+                if (data.success) {
+                    // 성공 메시지
+                    buttonText.textContent = '리또 받기 완료! ✓';
+                    claimButton.classList.remove('animate-pulse');
+                    claimButton.classList.add('bg-green-500');
+
+                    // 성공 알림
+                    setTimeout(() => {
+                        alert(`축하합니다! 리또 ${data.data.points_earned}개를 받았습니다!`);
+                        window.location.href = 'index.html';
+                    }, 500);
+                } else {
+                    // 에러 처리
+                    if (data.error.includes('이미 포인트를 받은')) {
+                        alert('이미 리또를 받은 스캔입니다.');
+                    } else {
+                        alert(`리또 받기 실패: ${data.error}`);
+                    }
+                    window.location.href = 'index.html';
+                }
+            } catch (error) {
+                console.error('리또 적립 실패:', error);
+                alert('리또 적립 중 오류가 발생했습니다.');
                 window.location.href = 'index.html';
-            }, 500);
+            }
         }
 
         // 페이지 이탈 방지 (카운트다운 진행 중)
